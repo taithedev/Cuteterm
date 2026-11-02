@@ -8,6 +8,7 @@ on:
       - 'v*'
     paths:
       - '.github/workflows/windows-release.yml'
+      - 'installer/**'
   workflow_dispatch:
 
 permissions:
