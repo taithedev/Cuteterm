@@ -89,7 +89,19 @@ function ct-bookmark {
         default { Write-Host 'Usage: ct bookmark <list|add|go|delete> [name] [path]' }
     }
 }
-function ct-calendar { param([int]$Month=(Get-Date).Month,[int]$Year=(Get-Date).Year); [globalization.CultureInfo]::CurrentCulture.DateTimeFormat.GetMonthName($Month) + " $Year"; & cal.exe $Month $Year }
+function ct-calendar {
+    param([ValidateRange(1,12)][int]$Month=(Get-Date).Month,[ValidateRange(1,9999)][int]$Year=(Get-Date).Year)
+    $first=[datetime]::new($Year,$Month,1)
+    $days=[datetime]::DaysInMonth($Year,$Month)
+    Write-CuteTerm ("      " + $first.ToString('MMMM yyyy')) 'cyan'
+    Write-Host 'Su Mo Tu We Th Fr Sa'
+    $line=('   ' * [int]$first.DayOfWeek)
+    for ($d=1;$d -le $days;$d++) {
+        $line+=('{0,2} ' -f $d)
+        if (($d+[int]$first.DayOfWeek)%7 -eq 0) { Write-Host $line; $line='' }
+    }
+    if ($line.Length -gt 0) { Write-Host $line }
+}
 function ct-clock { Get-Date -Format 'HH:mm:ss  dddd, MMMM dd, yyyy' }
 function ct-timer {
     param([ValidateRange(1,3600)][int]$Seconds=10)
@@ -123,7 +135,7 @@ function ct-pick {
 function ct-upper { param([Parameter(Mandatory=$true)][string]$Text); $Text.ToUpperInvariant() }
 function ct-lower { param([Parameter(Mandatory=$true)][string]$Text); $Text.ToLowerInvariant() }
 function ct-titlecase { param([Parameter(Mandatory=$true)][string]$Text); [globalization.CultureInfo]::CurrentCulture.TextInfo.ToTitleCase($Text) }
-function ct-reverse { param([Parameter(Mandatory=$true)][string]$Text); -join $Text.ToCharArray()[-1..(-$Text.Length)] }
+function ct-reverse { param([Parameter(Mandatory=$true)][string]$Text); $chars=$Text.ToCharArray(); [Array]::Reverse($chars); return (-join $chars) }
 function ct-trim { param([Parameter(Mandatory=$true)][string]$Text); $Text.Trim() }
 function ct-slug {
     param([Parameter(Mandatory=$true)][string]$Text)
