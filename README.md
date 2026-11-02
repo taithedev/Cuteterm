@@ -4,6 +4,28 @@
 
 **No standalone GUI is required.** Windows Terminal provides the tabs, rendering, accessibility and blur. The shell remains a real, persistent PowerShell session rather than spawning one process per command. The old WinForms/WebView2 experiment is preserved in the repository but is not used by this CLI installer.
 
+## Windows installer (recommended)
+
+Download the latest `CuteTerm-Windows-Setup-<version>.exe` from **[GitHub Releases](https://github.com/taithedev/Cuteterm/releases/latest)**. The Windows-only installer registers CuteTerm as a Start menu application, installs the real PowerShell command packs, and configures an Arctic-blur Windows Terminal profile (when Windows Terminal is available). It installs for the current user, normally without administrator privileges.
+
+**Requires PowerShell 7 or newer.** If it is not installed, first run `winget install --id Microsoft.PowerShell -e` from another shell. Windows Terminal is strongly recommended for tabs and blur. This is an unsigned installer; Windows SmartScreen may display a publisher warning. Only use assets downloaded from this repository's official Releases page.
+
+### Automatic updates
+
+CuteTerm checks [official GitHub Releases](https://github.com/taithedev/Cuteterm/releases) at startup, **at most once every 24 hours** by default. If a newer stable version is published, it downloads the official Windows CLI ZIP, checks the published SHA-256 manifest and the archive's version, and installs the update without closing your current tab. Open a new tab to load updated commands. Settings, local notes, bookmarks and `user-commands` remain untouched.
+
+    ct version
+    ct checkupdates
+    ct update
+    ct config set UpdateMode auto
+    ct config set UpdateMode notify
+    ct config set UpdateMode off
+    ct config set UpdateCheckHours 24
+
+The update check requires internet access. In `notify` mode, CuteTerm only reports updates and waits for `ct update`; in `off` mode it does not check automatically. The updater does not silently elevate privileges. Auto-updates replace the CLI files, not the Windows Apps installer registry entry.
+
+The Windows release assets and checksums are built from the [release workflow](.github/workflows/windows-release.yml) and [Inno Setup configuration](installer/CuteTerm.iss). The [manual CLI installer](install.ps1) remains available.
+
 ## Install from another CLI
 
 In PowerShell 7:
