@@ -19,8 +19,14 @@ function Read-CuteTermTerminalSettings {
     $doc=[System.Text.Json.JsonDocument]::Parse($raw,$opts)
     try {
         # Normalize JSONC to standard JSON without changing actual settings values.
-        $clean=[System.Text.Json.JsonSerializer]::Serialize($doc.RootElement)
-        return ($clean | ConvertFrom-Json -AsHashtable)
+        $stream=[System.IO.MemoryStream]::new()
+        try {
+            $writer=[System.Text.Json.Utf8JsonWriter]::new($stream)
+            try { $doc.RootElement.WriteTo($writer); $writer.Flush() }
+            finally { $writer.Dispose() }
+            $clean=[System.Text.Encoding]::UTF8.GetString($stream.ToArray())
+            return ($clean | ConvertFrom-Json -AsHashtable)
+        } finally { $stream.Dispose() }
     }
     finally { $doc.Dispose() }
 }
