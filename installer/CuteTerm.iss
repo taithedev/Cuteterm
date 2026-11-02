@@ -65,7 +65,5 @@ begin
     '/D /C where pwsh.exe >nul 2>nul', '',
     SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0);
   if not Result then
-    MsgBox('CuteTerm requires PowerShell 7 or newer.' + #13#10 +
-      'Install it first with: winget install --id Microsoft.PowerShell -e' +
-      #13#10 + 'Then reopen this installer.', mbError, MB_OK);
+    MsgBox('CuteTerm requires PowerShell 7 or newer.' + #13#10 + 'Install it first with: winget install --id Microsoft.PowerShell -e' + #13#10 + 'Then reopen this installer.', mbError, MB_OK);
 end;
