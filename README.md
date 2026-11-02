@@ -1,126 +1,124 @@
-# ✦ CuteTerm
+# CuteTerm — Rust native Windows ConPTY terminal
 
-**Native Rust terminal workbench for Windows.** A Claude Code–style interactive command experience with the Arctic-glass visual direction from your reference: original pastel ASCII cat, animated startup, system sidebar, colored output, command palette, tabs, and custom commands.
+CuteTerm v0.6.0 is a native Rust CLI/TUI with a Claude Code-style control palette and the pastel Arctic look from the project reference. It is NOT a PowerShell wrapper. Each internal tab runs its own real, persistent Windows ConPTY session.
 
-CuteTerm is **not** a PowerShell wrapper and has **no PowerShell runtime requirement**. The application is written in Rust with Ratatui and Crossterm. Windows Terminal supplies the outer acrylic window and native window tabs.
+## Windows download and installation
 
-## Windows download
+Use the latest official release: https://github.com/taithedev/Cuteterm/releases/latest
 
-[Download the latest Windows release](https://github.com/taithedev/Cuteterm/releases/latest). Choose the `CuteTerm-Windows-Setup-0.5.0.exe` file for the Rust rewrite.
+Choose CuteTerm-Windows-Setup-0.6.0.exe for the Windows x64 installer. It creates Start menu entries, adds the native executable to your user PATH, and optionally adds an "Open CuteTerm Here" entry to File Explorer. Launch in a new CMD or Windows Terminal window using:
 
-After installation, open **CuteTerm** from Start or type `cuteterm.exe` from its installation directory. A Windows Terminal profile named **CuteTerm** is also installed as a JSON fragment. Windows Terminal must be installed separately to obtain true acrylic blur.
+    cuteterm
 
-Windows 10/11 x64 is required. The user-level installer does not require administrator rights. The executable and updater are native Rust; Python is only used to package releases in CI.
+PowerShell is not needed. Windows Terminal is optional but is recommended for acrylic blur and native window tabs. Supported: Windows 10 1809+ and Windows 11 x64. The setup is unsigned, so use only official repository releases.
 
-## Run the Rust project from source
+## Native Windows shell
 
-Install the stable Rust toolchain, then:
+CuteTerm starts a persistent cmd.exe shell inside its ConPTY renderer. Shell variables, current directory and interactive command input persist. Type regular Windows commands directly:
 
-```cmd
-git clone https://github.com/taithedev/Cuteterm.git
-cd Cuteterm
-cargo run --release
-```
+    dir
+    cd Projects
+    echo Hello from CuteTerm
+    git status
+    cargo build
+    dotnet test
+    python --version
+    winget list
 
-To build native Windows executables:
+Tools such as Git, Rust, .NET, Python and WSL must be installed separately to work. Native CMD commands do not require PowerShell.
 
-```cmd
-cargo build --release
-target\release\cuteterm.exe
-```
+Start the app with a different installed shell:
 
-## How to use the interface
+    cuteterm shell cmd.exe
+    cuteterm shell pwsh.exe
+    cuteterm shell wsl.exe
 
-Enter a real Windows command normally (like `dir`, `git status`, `cargo build`, `dotnet test`, or `lua -v`). CuteTerm runs it with the operating system's command processor and captures output in the active workspace. `cd`, `pwd`, `cls` and `clear` are supported natively.
+Open at a specific folder:
 
-Use slash commands for the interactive control layer:
+    cuteterm --cwd "C:\Projects"
 
-```text
-/help
-/commands
-/find git
-/new
-/tabs
-/tab 2
-/rename backend
-/theme arctic
-/theme oled
-/animate off
-/system
-/cwd
-/cd C:\Projects
-/shell
-/shell cmd.exe
-/window
-/split
-/plugins
-/plugin new hello cmd.exe
-/plugin reload
-/update check
-/update install
-/update auto
-/update notify
-/update off
-/exit
-```
+Show diagnostics and commands without opening the TUI:
 
-**Shortcuts:** Ctrl+T new workspace, Ctrl+W close, Alt+1–9 switch tabs, Up/Down command history, Tab slash completion, PageUp/PageDown output scroll, Ctrl+C cancel running process, Ctrl+Q quit.
+    cuteterm doctor
+    cuteterm commands
+    cuteterm themes
+    cuteterm help
+    cuteterm check-updates
 
-Regular shell commands work inside each workspace. Commands that require a fully interactive terminal (such as TUIs and REPLs) should use `/shell`, which temporarily hands the real console to `cmd.exe` or another shell, then returns to CuteTerm. An embedded ConPTY emulator is not part of v0.5.0.
+## CuteTerm command palette
 
-## Custom commands
+Press Ctrl+G inside CuteTerm to open its command palette; ordinary typing goes directly to the native Windows shell. Examples:
 
-The repository's `commands/` folder includes examples for Git, Cargo, .NET, Lua and CMD. Your private extensions live in `%LOCALAPPDATA%\CuteTerm\commands`.
+    help
+    new
+    shell cmd.exe
+    shell pwsh.exe
+    tabs
+    tab 2
+    rename my-project
+    close
+    theme arctic
+    theme oled
+    sidebar off
+    animate off
+    system
+    commands
+    find git
+    config
+    plugins
+    plugin path
+    plugin new hello cmd.exe
+    plugin reload
+    run hello
+    window
+    split
+    update check
+    update install
+    update auto
+    update notify
+    update off
+    exit
 
-Custom extensions use JSON manifests so you can add commands without compiling Rust:
+Keyboard: Ctrl+G opens/closes palette, Ctrl+T opens a tab, Ctrl+W closes it, Alt+1–9 selects tabs, Ctrl+Q quits, F1 shows help, mouse wheel/Shift+PgUp/Shift+PgDn scroll terminal output. Other keys are forwarded to the interactive shell.
 
-```json
-{
-  "name": "git-status",
-  "description": "Show current Git status",
-  "program": "git.exe",
-  "args": ["status", "--short", "--branch"]
-}
-```
+## Plugins and real command count
 
-Save as `%LOCALAPPDATA%\CuteTerm\commands\git-status.json`, run `/plugin reload`, then `/git-status`. Commands run with your existing Windows user permissions. Only install custom command manifests from sources you trust.
+CuteTerm supports external command manifests (JSON) in the repository's commands/ folder and your local %LOCALAPPDATA%\CuteTerm\commands directory. An example command looks like this:
 
-**Command counts are real.** `/commands` distinguishes implemented CuteTerm actions, custom commands and executables actually found on your PATH. This release does not pretend that 355 separately implemented Rust commands exist. Windows, Git, Rust, Node, Python, C# tools, and other programs can be used when they are installed.
+    {
+      "name": "git-status",
+      "description": "Show repository changes",
+      "program": "git.exe",
+      "args": ["status", "--short", "--branch"]
+    }
 
-## Themes, tabs and Arctic blur
+The Ctrl+G palette's plugin reload action loads changes. Program execution uses your normal Windows account permissions; review manifests you install.
 
-Five themes are included: **Arctic, Blossom, Midnight, Mint, OLED**. Type `/theme arctic` to choose Arctic.
+The command count is based on real executables found on Windows PATH. CuteTerm does not claim 355 independently implemented Rust commands.
 
-The Windows installer adds `terminal/CuteTerm.json` to your per-user Windows Terminal **Fragments** directory. It contributes a modern pastel profile with real Windows Terminal acrylic blur, saved opacity and colors without modifying your other profiles. Your personal settings in `%LOCALAPPDATA%\CuteTerm` survive updates.
+## Appearance and Windows integration
 
-In-app tabs are independent Rust workspaces with separate working directories and process logs. The `/window` and `/split` commands request real Windows Terminal tabs and split panes.
+The Rust terminal has five color palettes, a two-column system panel on wide screens, native tabs and animated pastel artwork. Windows Terminal's official profile fragment in terminal/CuteTerm.json provides real acrylic blur around the CLI and supports separate Windows Terminal tabs/panes. The standalone CLI also works in standard Windows consoles.
 
-## Verified auto-updates
+The installer can add an optional context-menu action to open at a selected Explorer directory. It installs for the current user, generally without elevation.
 
-CuteTerm checks [official GitHub Releases](https://github.com/taithedev/Cuteterm/releases) at startup up to once per 24 hours. If the release contains a newer `CuteTerm-Windows-x64.zip` with a matching GitHub SHA-256 digest, it launches the separate `cuteterm-updater.exe` and exits before the executable is replaced. An invalid checksum aborts the update.
+## Updates and development
 
-You control the behavior with `/update auto`, `/update notify` or `/update off`. Custom commands and settings are stored outside the program folder, so updates preserve them. Automatic updates require network access and write permissions to the per-user install folder.
+CuteTerm checks GitHub Releases for newer Windows builds (default: auto, at most once every 24 hours). It validates the official asset SHA-256 digest before passing the ZIP to its standalone updater. Open a new terminal session after updating; custom commands and configuration in LocalAppData are preserved.
 
-Windows installer assets are currently unsigned. Only download from the official GitHub Releases page.
+To build from source with the stable Rust toolchain:
 
-## Repository layout
+    cargo test --all-targets
+    cargo build --release
 
-```text
-src/
-  main.rs                Rust CLI entrypoint
-  app.rs                 Ratatui workspace UI + keyboard controls
-  commands.rs            Process execution and command packs
-  theme.rs               Pastel palettes
-  config.rs              User config and history paths
-  update.rs              Verified GitHub release auto-updates
-  bin/cuteterm-updater.rs Separate Windows update helper
-commands/                 Built-in JSON command examples
-terminal/CuteTerm.json    Windows Terminal acrylic fragment
-installer/CuteTerm.iss    Native Windows EXE installer
-installer/package.py      Build-time packaging (not runtime)
-.github/workflows/        Rust Windows build, smoke tests and release
-```
+Source layout:
+- src/app.rs — Ratatui UI, tabs, palette, keyboard forwarding
+- src/pty.rs — Windows ConPTY shell sessions and VT100 parser
+- src/commands.rs — custom command packs and executable discovery
+- src/config.rs — settings and user paths
+- src/theme.rs — palettes
+- src/update.rs — verified release updater
+- installer/CuteTerm.iss — Windows x64 installer
+- .github/workflows/windows-release.yml — automated tests and release
 
-Note: the repo's Git history contains a previous PowerShell/C# prototype. v0.5.0 replaces that architecture with the Rust executable.
-
-**Project:** [taithedev/Cuteterm](https://github.com/taithedev/Cuteterm) · [Windows downloads](https://github.com/taithedev/Cuteterm/releases/latest)
+Please report compatibility issues at https://github.com/taithedev/Cuteterm/issues. Advanced terminal applications may have untested edge cases.
