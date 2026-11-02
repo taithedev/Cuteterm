@@ -1,0 +1,15 @@
+# Windows release outputs
+dist/
+installer/Output/
+
+# Local CuteTerm test/profile data
+cli/data/
+cli/user-commands/
+cli/config.json
+
+# Editors and temporary files
+.vs/
+.vscode/
+*.tmp
+*.bak
+*.log
