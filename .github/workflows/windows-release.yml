@@ -1,0 +1,116 @@
+name: CuteTerm Windows installer and release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - '.github/workflows/windows-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cuteterm-windows-release
+  cancel-in-progress: false
+
+jobs:
+  build-test-publish:
+    if: github.repository == 'taithedev/Cuteterm'
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out release source
+        uses: actions/checkout@v4
+
+      - name: Validate PowerShell commands and updater
+        shell: pwsh
+        run: ./cli/tests/Smoke.ps1
+
+      - name: Verify CLI installation without admin permissions
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./install.ps1 -SkipTerminalProfile
+          $homeDir = Join-Path $env:LOCALAPPDATA 'CuteTerm'
+          $expected = (Get-Content -LiteralPath 'cli/version.txt' -Raw).Trim()
+          $installed = (Get-Content -LiteralPath (Join-Path $homeDir 'version.txt') -Raw).Trim()
+          if ($installed -ne $expected) { throw "Installed version $installed differs from $expected" }
+          & pwsh -NoLogo -NoProfile -NonInteractive -File (Join-Path $homeDir 'cli.ps1') version
+          if ($LASTEXITCODE -ne 0) { throw 'CLI installation failed to execute.' }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Windows installer and verified update ZIP
+        shell: pwsh
+        run: ./installer/build-release.ps1
+
+      - name: Validate release payload and install the EXE silently
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -LiteralPath 'cli/version.txt' -Raw).Trim()
+          $name = "CuteTerm-Windows-Setup-$version.exe"
+          $exe = Join-Path (Resolve-Path 'dist').Path $name
+          $zip = Join-Path (Resolve-Path 'dist').Path 'CuteTerm-CLI-Windows.zip'
+          $manifest = Join-Path (Resolve-Path 'dist').Path 'CuteTerm-CLI-Windows.zip.sha256'
+          foreach ($item in @($exe,$zip,$manifest)) {
+            if (-not (Test-Path -LiteralPath $item)) { throw "Missing release artifact: $item" }
+          }
+          $expectedHash = ((Get-Content -LiteralPath $manifest -Raw).Trim() -split '\s+')[0]
+          $actualHash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+          if ($expectedHash -ine $actualHash) { throw 'Release ZIP checksum verification failed.' }
+          $archive = [IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $names = @($archive.Entries | ForEach-Object FullName)
+            foreach ($path in @('install.ps1','cli/version.txt','cli/module/CuteTerm.psm1','cli/updater/ReleaseUpdater.ps1')) {
+              if ($path -notin $names) { throw "Release ZIP is missing $path" }
+            }
+          } finally { $archive.Dispose() }
+          $p = Start-Process -FilePath $exe -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Windows setup failed with exit code $($p.ExitCode)." }
+          $installedVersion = (Get-Content -LiteralPath (Join-Path $env:LOCALAPPDATA 'CuteTerm/version.txt') -Raw).Trim()
+          if ($installedVersion -ne $version) { throw "Installer did not deploy CuteTerm $version" }
+          Write-Host "Windows EXE setup and ZIP verification passed for CuteTerm $version"
+
+      - name: Upload verified Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cuteterm-windows-release
+          path: |
+            dist/CuteTerm-Windows-Setup-*.exe
+            dist/CuteTerm-Windows-Setup-*.exe.sha256
+            dist/CuteTerm-CLI-Windows.zip
+            dist/CuteTerm-CLI-Windows.zip.sha256
+          if-no-files-found: error
+
+      - name: Publish stable GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content -LiteralPath 'cli/version.txt' -Raw).Trim()
+          $tag = "v$version"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
+            throw "Tag $($env:GITHUB_REF_NAME) and source version $tag do not match."
+          }
+          & gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; not overwriting published assets."
+            exit 0
+          }
+          $assets = @(
+            "dist/CuteTerm-Windows-Setup-$version.exe",
+            "dist/CuteTerm-Windows-Setup-$version.exe.sha256",
+            'dist/CuteTerm-CLI-Windows.zip',
+            'dist/CuteTerm-CLI-Windows.zip.sha256'
+          )
+          & gh release create $tag @assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "CuteTerm $tag - Windows" --notes-file installer/RELEASE-NOTES.md
+          if ($LASTEXITCODE -ne 0) { throw "Publishing $tag failed." }
+          Write-Host "Published $tag at https://github.com/$($env:GITHUB_REPOSITORY)/releases/tag/$tag"
