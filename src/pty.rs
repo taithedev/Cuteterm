@@ -126,4 +126,27 @@ mod tests {
         assert_eq!(parser.screen().cell(0, 0).unwrap().contents(), "h");
         assert_eq!(parser.screen().cell(0, 0).unwrap().fgcolor(), vt100::Color::Idx(1));
     }
+    #[cfg(windows)]
+    #[test]
+    fn windows_cmd_conpty_executes_and_persists_environment() {
+        use std::time::{Duration, Instant};
+        let cwd = std::env::current_dir().expect("cwd");
+        let mut session = super::ShellSession::spawn("cmd.exe", &cwd, 20, 100)
+            .expect("ConPTY should start on a supported Windows runner");
+        session.send_command("set CUTETERM_TEST_VAR=conpty_").expect("set variable");
+        session.send_command("echo %CUTETERM_TEST_VAR%works").expect("echo saved variable");
+        let start = Instant::now();
+        let mut seen = false;
+        while start.elapsed() < Duration::from_secs(8) {
+            session.poll();
+            if session.parser.screen().contents().contains("conpty_works") {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        session.stop();
+        assert!(seen, "Real cmd.exe must persist shell variables across commands inside ConPTY");
+    }
+
 }
