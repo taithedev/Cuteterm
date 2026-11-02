@@ -66,7 +66,65 @@ function Invoke-CuteTermUpdate {
         $expected=$Matches.hash.ToLowerInvariant()
         $actual=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($expected -ne $actual) { throw 'Downloaded release failed SHA-256 verification.' }
-        if ($zipAsset[0].digest -and $zipAsset[0].digest -match '^sha256:([a-fA-F0-9]{64})$') {
+        $digestProperty=$zipAsset[0].PSObject.Properties['digest']
+        if ($digestProperty -and $digestProperty.Value -and $digestProperty.Value -match '^sha256:([a-fA-F0-9]{64})
+        $extract=Join-Path $temp 'payload'
+        Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force -ErrorAction Stop
+        $install=Join-Path $extract 'install.ps1'
+        $releaseVersion=Join-Path $extract 'cli/version.txt'
+        $module=Join-Path $extract 'cli/module/CuteTerm.psm1'
+        if (-not (Test-Path -LiteralPath $install) -or
+            -not (Test-Path -LiteralPath $module) -or
+            -not (Test-Path -LiteralPath $releaseVersion)) { throw 'Downloaded release is missing required installer files.' }
+        $packageVersion=(Get-Content -LiteralPath $releaseVersion -Raw -ErrorAction Stop).Trim()
+        if ($packageVersion -ne $latest.ToString()) { throw 'Downloaded version does not match the published release tag.' }
+
+        # A fresh PowerShell process performs the update. Existing tab stays usable.
+        & pwsh -NoLogo -NoProfile -NonInteractive -File $install -SkipTerminalProfile
+        if ($LASTEXITCODE -ne 0) { throw "Installer returned exit code $LASTEXITCODE." }
+        Write-CuteTerm "CuteTerm $latest installed. Open a new tab to load updated commands." 'green'
+        return $true
+    }
+    catch {
+        Write-Warning ("CuteTerm update cancelled: " + $_.Exception.Message)
+        return $false
+    }
+    finally {
+        if (Test-Path -LiteralPath $temp) {
+            Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Test-CuteTermUpdatesAtStartup {
+    $cfg=Get-CuteTermConfig
+    $mode=if ($cfg.UpdateMode -in @('auto','notify','off')) { $cfg.UpdateMode } else { 'notify' }
+    if ($mode -eq 'off') { return }
+    $hours=24
+    if ($cfg.UpdateCheckHours) { $hours=[math]::Max(1,[math]::Min(168,[int]$cfg.UpdateCheckHours)) }
+    $dir=Join-Path $script:Root 'data'
+    [void](New-Item -Path $dir -ItemType Directory -Force)
+    $cache=Join-Path $dir 'last-update-check.txt'
+    if (Test-Path -LiteralPath $cache) {
+        $last=[datetime]::MinValue
+        $value=(Get-Content -LiteralPath $cache -Raw -ErrorAction SilentlyContinue)
+        if ([datetime]::TryParse($value,[ref]$last) -and
+            [datetime]::UtcNow.Subtract($last.ToUniversalTime()).TotalHours -lt $hours) { return }
+    }
+    [datetime]::UtcNow.ToString('o') | Set-Content -LiteralPath $cache -Encoding ascii
+    if ($mode -eq 'auto') {
+        [void](Invoke-CuteTermUpdate -Quiet)
+        return
+    }
+    try {
+        $latest=Get-CuteTermRelease
+        $current=Get-CuteTermCurrentVersion
+        if ([version]($latest.tag_name.Substring(1)) -gt $current) {
+            Write-CuteTerm "CuteTerm $($latest.tag_name) available. Run 'ct update' to install." 'yellow'
+        }
+    } catch { } # Offline is normal; never block shell startup.
+}
+) {
             if ($actual -ne $Matches[1].ToLowerInvariant()) { throw 'GitHub release asset digest does not match.' }
         }
         $extract=Join-Path $temp 'payload'
