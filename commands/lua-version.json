@@ -1,0 +1,8 @@
+{
+  "name": "lua-version",
+  "description": "Show installed Lua version (requires Lua)",
+  "program": "lua.exe",
+  "args": [
+    "-v"
+  ]
+}
