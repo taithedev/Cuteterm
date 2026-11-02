@@ -1,0 +1,8 @@
+{
+  "name": "dotnet-build",
+  "description": "Compile the current C# project (requires .NET SDK)",
+  "program": "dotnet.exe",
+  "args": [
+    "build"
+  ]
+}
