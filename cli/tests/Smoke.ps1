@@ -15,7 +15,8 @@ $env:CUTETERM_HOME=Join-Path $repo 'cli'
 Import-Module (Join-Path $repo 'cli/module/CuteTerm.psm1') -Force -ErrorAction Stop
 $packCommands=@(Get-Command -Name 'ct-*' -CommandType Function)
 if ($packCommands.Count -lt 200) { throw "Expected >=200 real CuteTerm command functions; got $($packCommands.Count)" }
-if ((Get-CuteTermCurrentVersion).ToString() -ne '0.4.0') { throw 'CuteTerm release version did not load.' }
+if ((Get-Content -LiteralPath (Join-Path $env:CUTETERM_HOME 'version.txt') -Raw).Trim() -ne '0.4.0') { throw 'CuteTerm release version did not load.' }
+ct version
 if (-not (Get-Command ct-checkupdates -ErrorAction Ignore)) { throw 'Release updater command was not exported.' }
 $allCommands=@(Get-Command -ErrorAction SilentlyContinue | Sort-Object Name -Unique)
 if ($allCommands.Count -lt 356) { throw "Expected >=356 real command names on Windows runner; got $($allCommands.Count)" }
