@@ -36,35 +36,25 @@ pub fn data_dir() -> PathBuf {
 }
 
 pub fn load() -> Settings {
-    let path = data_dir().join("config.json");
-    fs::read_to_string(path)
+    fs::read_to_string(data_dir().join("config.json"))
         .ok()
-        .and_then(|value| serde_json::from_str::<Settings>(&value).ok())
+        .and_then(|value| serde_json::from_str(&value).ok())
         .unwrap_or_default()
 }
 
 pub fn save(settings: &Settings) -> io::Result<()> {
     let dir = data_dir();
     fs::create_dir_all(&dir)?;
-    let file = dir.join("config.json");
-    let tmp = dir.join("config.json.tmp");
     let contents = serde_json::to_vec_pretty(settings)?;
-    fs::write(&tmp, contents)?;
-    fs::rename(tmp, file)
+    // Windows supports replacing existing files with truncating writes.
+    fs::write(dir.join("config.json"), contents)
 }
 
-pub fn commands_dir() -> PathBuf {
-    data_dir().join("commands")
-}
+pub fn commands_dir() -> PathBuf { data_dir().join("commands") }
 
-pub fn history_file() -> PathBuf {
-    data_dir().join("history.txt")
-}
+pub fn history_file() -> PathBuf { data_dir().join("history.txt") }
 
-pub fn startup_dirs() -> io::Result<()> {
-    fs::create_dir_all(commands_dir())?;
-    Ok(())
-}
+pub fn startup_dirs() -> io::Result<()> { fs::create_dir_all(commands_dir()) }
 
 #[cfg(test)]
 mod tests {
@@ -73,6 +63,7 @@ mod tests {
     fn defaults_are_reasonable() {
         let s = Settings::default();
         assert_eq!(s.theme, "arctic");
+        assert_eq!(s.default_shell, "cmd.exe");
         assert_eq!(s.update_mode, "auto");
         assert!(s.update_check_hours > 0);
     }
