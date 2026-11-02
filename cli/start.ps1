@@ -11,4 +11,14 @@ function global:prompt {
     catch { return 'PS> ' }
 }
 try { $Host.UI.RawUI.WindowTitle='✦ CuteTerm · PowerShell' } catch { }
+# Keep PowerShell's native line editor, with history suggestions and tab completion.
+try {
+    if (Get-Module -ListAvailable -Name PSReadLine) {
+        Import-Module PSReadLine -ErrorAction Stop
+        Set-PSReadLineOption -EditMode Windows -PredictionSource History -PredictionViewStyle ListView -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward -ErrorAction SilentlyContinue
+        Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward -ErrorAction SilentlyContinue
+    }
+} catch { Write-Verbose "PSReadLine customization skipped: $_" }
 Show-CuteTermStartup
