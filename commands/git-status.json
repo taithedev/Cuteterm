@@ -1,0 +1,10 @@
+{
+  "name": "git-status",
+  "description": "Show the current Git working tree status (requires Git)",
+  "program": "git.exe",
+  "args": [
+    "status",
+    "--short",
+    "--branch"
+  ]
+}
