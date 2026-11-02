@@ -9,7 +9,12 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    // Explorer passes --cwd so a new shell opens at the selected folder.
+    if args.len() >= 2 && args[0] == "--cwd" {
+        env::set_current_dir(&args[1])?;
+        args.drain(0..2);
+    }
     let mut settings = config::load();
     match args.first().map(String::as_str) {
         Some("--version" | "-V" | "version") => {
@@ -21,6 +26,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("Usage: cuteterm [command]");
             println!("  cuteterm                 start native ConPTY terminal");
             println!("  cuteterm shell [program] launch a terminal with cmd.exe, pwsh.exe, wsl.exe, etc.");
+            println!("  cuteterm --cwd <folder>  open the terminal at this folder");
             println!("  cuteterm commands        show CuteTerm commands and real PATH command count");
             println!("  cuteterm doctor          check system and terminal compatibility");
             println!("  cuteterm themes          list palettes");
