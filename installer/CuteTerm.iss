@@ -47,8 +47,8 @@ Source: "..\commands\*.json"; DestDir: "{app}\commands"; Flags: ignoreversion
 Source: "..\terminal\CuteTerm.json"; DestDir: "{localappdata}\Microsoft\Windows Terminal\Fragments\CuteTerm"; Flags: ignoreversion
 
 [Icons]
-Name: "{userprograms}\CuteTerm"; Filename: "{app}\cuteterm.exe"; WorkingDir: "{userprofile}"; Comment: "Native Rust terminal workbench"
-Name: "{userprograms}\CuteTerm - Command List"; Filename: "{app}\cuteterm.exe"; Parameters: "commands"; WorkingDir: "{userprofile}"; Comment: "Show real installed commands"
+Name: "{userprograms}\CuteTerm"; Filename: "{app}\cuteterm.exe"; WorkingDir: "{localappdata}"; Comment: "Native Rust terminal workbench"
+Name: "{userprograms}\CuteTerm - Command List"; Filename: "{app}\cuteterm.exe"; Parameters: "commands"; WorkingDir: "{localappdata}"; Comment: "Show real installed commands"
 
 [Run]
 Filename: "{app}\cuteterm.exe"; Description: "Launch CuteTerm"; Flags: postinstall nowait skipifsilent
