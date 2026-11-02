@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $scriptPaths=@((Join-Path $repo 'install.ps1'),(Join-Path $repo 'uninstall.ps1'))
 $scriptPaths+=@(Get-ChildItem -LiteralPath (Join-Path $repo 'cli') -Recurse -File | Where-Object Extension -In @('.ps1','.psm1') | ForEach-Object FullName)
+$scriptPaths+=@(Get-ChildItem -LiteralPath (Join-Path $repo 'installer') -Recurse -File -Filter '*.ps1' | ForEach-Object FullName)
 foreach ($path in $scriptPaths) {
     $tokens=$null; $parseErrors=$null
     [void][System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$parseErrors)
@@ -13,7 +14,9 @@ Write-Host ("Parsed {0} PowerShell files." -f $scriptPaths.Count)
 $env:CUTETERM_HOME=Join-Path $repo 'cli'
 Import-Module (Join-Path $repo 'cli/module/CuteTerm.psm1') -Force -ErrorAction Stop
 $packCommands=@(Get-Command -Name 'ct-*' -CommandType Function)
-if ($packCommands.Count -lt 150) { throw "Expected >=150 real CuteTerm command functions; got $($packCommands.Count)" }
+if ($packCommands.Count -lt 200) { throw "Expected >=200 real CuteTerm command functions; got $($packCommands.Count)" }
+if ((Get-CuteTermCurrentVersion).ToString() -ne '0.4.0') { throw 'CuteTerm release version did not load.' }
+if (-not (Get-Command ct-checkupdates -ErrorAction Ignore)) { throw 'Release updater command was not exported.' }
 $allCommands=@(Get-Command -ErrorAction SilentlyContinue | Sort-Object Name -Unique)
 if ($allCommands.Count -lt 356) { throw "Expected >=356 real command names on Windows runner; got $($allCommands.Count)" }
 if ((ct upper hello) -ne 'HELLO') { throw 'ct upper failed' }
