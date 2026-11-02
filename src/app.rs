@@ -1,686 +1,678 @@
+//! CuteTerm v0.6 — a real Windows ConPTY shell inside a Claude Code-inspired Rust CLI.
+//! Terminal input always goes to the active persistent shell except when the
+//! CuteTerm command palette is open (Ctrl+G).
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     env, io,
     path::PathBuf,
     process::Command,
-    sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
 };
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, DisableMouseCapture, EnableMouseCapture},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+        EnableBracketedPaste, DisableBracketedPaste, EnableMouseCapture, DisableMouseCapture},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
-    DefaultTerminal,
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    DefaultTerminal, Frame,
 };
 use sysinfo::System;
 
 use crate::{
-    commands::{self, CustomCommand, ProcessEvent},
+    commands::{self, CustomCommand},
     config::{self, Settings},
+    pty::ShellSession,
     theme::{self, Palette},
     update,
 };
 
-const MAX_LOGS: usize = 1100;
-const FRAME_TIME: Duration = Duration::from_millis(80);
-
-#[derive(Clone, Copy)]
-enum LogKind { Normal, Accent, Info, Success, Error, Muted }
-
-struct LogEntry {
-    text: String,
-    kind: LogKind,
-}
+const TICK: Duration = Duration::from_millis(55);
+const MAX_MESSAGES: usize = 10;
 
 struct Tab {
-    id: usize,
+    id: u64,
     title: String,
-    cwd: PathBuf,
-    logs: VecDeque<LogEntry>,
-    input: String,
-    cursor: usize,
+    session: ShellSession,
+}
+
+#[derive(Default)]
+struct PaletteInput {
+    open: bool,
+    text: String,
     history: Vec<String>,
-    history_pos: usize,
-    scroll: usize,
-    running: bool,
-    cancel: Option<Sender<()>>,
-}
-
-impl Tab {
-    fn new(id: usize, name: String, cwd: PathBuf) -> Self {
-        Self {
-            id, title: name, cwd, logs: VecDeque::new(), input: String::new(), cursor: 0,
-            history: Vec::new(), history_pos: 0, scroll: 0, running: false, cancel: None,
-        }
-    }
-
-    fn push(&mut self, text: impl Into<String>, kind: LogKind) {
-        let text = clean_text(&text.into());
-        for line in text.lines() {
-            self.logs.push_back(LogEntry { text: line.to_string(), kind });
-        }
-        if self.logs.len() > MAX_LOGS {
-            self.logs.drain(..self.logs.len() - MAX_LOGS);
-        }
-        self.scroll = 0;
-    }
-}
-
-fn clean_text(input: &str) -> String {
-    input.chars()
-        .filter(|c| *c == '\t' || !c.is_control())
-        .collect::<String>()
-}
-
-#[derive(Clone, Debug)]
-pub enum Action {
-    Exit,
-    InteractiveShell(String),
-    CheckUpdate(bool),
+    history_index: usize,
 }
 
 pub struct App {
     settings: Settings,
     tabs: Vec<Tab>,
     selected: usize,
-    next_id: usize,
+    next_id: u64,
+    palette: PaletteInput,
+    help: bool,
+    messages: VecDeque<String>,
     custom: BTreeMap<String, CustomCommand>,
     executables: BTreeSet<String>,
-    tx: Sender<ProcessEvent>,
-    rx: Receiver<ProcessEvent>,
     started: Instant,
     cpu: String,
     memory: String,
     os: String,
-    status: String,
+    run_update: bool,
+    should_exit: bool,
 }
 
 impl App {
-    pub fn new(settings: Settings) -> Self {
-        let (tx, rx) = mpsc::channel();
+    pub fn new(settings: Settings, width: u16, height: u16) -> io::Result<Self> {
         let mut system = System::new_all();
         system.refresh_memory();
-        let cpu = system.cpus().first().map(|c| c.brand().to_string()).unwrap_or_else(|| "CPU information unavailable".into());
-        let memory = format!("{} / {} GiB",
-            (system.total_memory().saturating_sub(system.available_memory())) / (1024 * 1024 * 1024),
-            system.total_memory() / (1024 * 1024 * 1024));
-        let os = System::long_os_version().unwrap_or_else(|| "Windows".into());
+        let cpu = system.cpus().first().map(|cpu| cpu.brand().to_string())
+            .unwrap_or_else(|| "Processor unavailable".into());
+        let memory = format!("{:.1} / {:.1} GiB",
+            (system.total_memory().saturating_sub(system.available_memory())) as f64 / 1_073_741_824.0,
+            system.total_memory() as f64 / 1_073_741_824.0);
+        let os = System::long_os_version().unwrap_or_else(|| "Microsoft Windows".into());
         let (custom, warnings) = commands::load_custom_commands(&config::commands_dir());
         let executables = commands::available_executables();
         let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let mut tab = Tab::new(0, "workspace".into(), cwd);
-        tab.push("✦  CuteTerm / native Rust terminal workbench", LogKind::Accent);
-        tab.push("   A softer side of the command line.", LogKind::Muted);
-        tab.push("", LogKind::Normal);
-        tab.push("   Type /help for shortcuts, /commands for actual commands.", LogKind::Info);
-        tab.push("   Enter regular Windows commands directly. Use /shell for interactive programs.", LogKind::Info);
-        tab.push("   Personal commands live in your CuteTerm commands folder.", LogKind::Muted);
-        tab.push("", LogKind::Normal);
-        for warning in warnings { tab.push(warning, LogKind::Error); }
-        Self {
-            settings, tabs: vec![tab], selected: 0, next_id: 1,
-            custom, executables, tx, rx, started: Instant::now(), cpu, memory, os,
-            status: "ready • Rust-native".into(),
-        }
+        let dims = shell_dimensions(width, height, settings.show_system_panel);
+        let session = ShellSession::spawn(&settings.default_shell, &cwd, dims.0, dims.1)?;
+        let mut messages = VecDeque::new();
+        messages.push_back("CuteTerm / native Windows ConPTY. Ctrl+G opens the command palette.".into());
+        for message in warnings { messages.push_back(message); }
+        Ok(Self {
+            settings,
+            tabs: vec![Tab { id: 1, title: "terminal".into(), session }],
+            selected: 0,
+            next_id: 2,
+            palette: PaletteInput::default(),
+            help: false,
+            messages,
+            custom, executables,
+            started: Instant::now(),
+            cpu, memory, os,
+            run_update: false, should_exit: false,
+        })
+    }
+
+    fn log(&mut self, message: impl Into<String>) {
+        self.messages.push_back(message.into());
+        while self.messages.len() > MAX_MESSAGES { self.messages.pop_front(); }
     }
 
     fn tab(&self) -> &Tab { &self.tabs[self.selected] }
     fn tab_mut(&mut self) -> &mut Tab { &mut self.tabs[self.selected] }
-    fn log(&mut self, text: impl Into<String>, kind: LogKind) { self.tab_mut().push(text, kind) }
-    fn ensure_tab(&mut self) {
-        if self.tabs.is_empty() {
-            self.tabs.push(Tab::new(self.next_id, "workspace".into(),
-                env::current_dir().unwrap_or_else(|_| PathBuf::from("."))));
-            self.next_id += 1;
-            self.selected = 0;
-        }
-    }
 
-    fn advance(&mut self) {
-        while let Ok(message) = self.rx.try_recv() {
-            match message {
-                ProcessEvent::Output { tab, text, error } => {
-                    if let Some(target) = self.tabs.iter_mut().find(|t| t.id == tab) {
-                        target.push(text, if error { LogKind::Error } else { LogKind::Normal });
-                    }
-                }
-                ProcessEvent::Finished { tab, code } => {
-                    if let Some(target) = self.tabs.iter_mut().find(|t| t.id == tab) {
-                        target.running = false;
-                        target.cancel = None;
-                        target.push(format!("  ↳ process finished • exit {}", code.map_or("?".into(), |x| x.to_string())),
-                            if code == Some(0) { LogKind::Success } else { LogKind::Error });
-                    }
-                    self.status = "ready • Rust-native".into();
-                }
+    fn spawn_tab(&mut self, shell: &str, width: u16, height: u16) {
+        let dims = shell_dimensions(width, height, self.settings.show_system_panel);
+        let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        match ShellSession::spawn(shell, &cwd, dims.0, dims.1) {
+            Ok(session) => {
+                let id = self.next_id;
+                self.next_id += 1;
+                self.tabs.push(Tab { id, title: format!("{shell} #{id}"), session });
+                self.selected = self.tabs.len()-1;
+                self.help = false;
+                self.log(format!("Started an independent {shell} ConPTY tab."));
             }
+            Err(error) => self.log(format!("Could not launch {shell}: {error}")),
         }
-    }
-
-    fn switch(&mut self, index: usize) {
-        if index < self.tabs.len() { self.selected = index; }
-    }
-
-    fn new_tab(&mut self) {
-        let cwd = self.tab().cwd.clone();
-        let id = self.next_id;
-        self.next_id += 1;
-        let mut tab = Tab::new(id, format!("workspace {}", id + 1), cwd);
-        tab.push("✦ New CuteTerm workspace", LogKind::Accent);
-        tab.push("Commands run in this tab's own working directory.", LogKind::Muted);
-        self.tabs.push(tab);
-        self.selected = self.tabs.len() - 1;
     }
 
     fn close_tab(&mut self) {
         if self.tabs.len() == 1 {
-            self.tab_mut().push("Last tab cannot be closed. Use /exit to quit.", LogKind::Muted);
+            self.log("Last tab is kept open. Use Ctrl+Q to exit CuteTerm.");
             return;
         }
-        let mut removed = self.tabs.remove(self.selected);
-        if let Some(cancel) = removed.cancel.take() { let _ = cancel.send(()); }
-        self.selected = self.selected.min(self.tabs.len() - 1);
+        self.tabs.remove(self.selected);
+        self.selected = self.selected.min(self.tabs.len()-1);
+        self.log("Closed the tab and its shell process.");
     }
 
-    fn submit(&mut self) -> Option<Action> {
-        let input = std::mem::take(&mut self.tab_mut().input);
-        self.tab_mut().cursor = 0;
-        let value = input.trim().to_string();
-        if value.is_empty() { return None; }
-        {
-            let tab = self.tab_mut();
-            tab.history.push(value.clone());
-            if tab.history.len() > 500 { tab.history.remove(0); }
-            tab.history_pos = tab.history.len();
-            tab.push(format!("❯ {value}"), LogKind::Accent);
-        }
-
-        let words = commands::split_words(&value);
-        let first = words.first().map(String::as_str).unwrap_or("");
-        if first.starts_with('/') { return self.slash(&words); }
-
-        if first.eq_ignore_ascii_case("cd") || first.eq_ignore_ascii_case("chdir") {
-            let location = words.get(1).map(String::as_str).unwrap_or("%USERPROFILE%");
-            let destination = if location == "%USERPROFILE%" || location == "~" {
-                env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| self.tab().cwd.clone())
-            } else {
-                let given = PathBuf::from(location);
-                if given.is_absolute() { given } else { self.tab().cwd.join(given) }
-            };
-            match destination.canonicalize() {
-                Ok(path) if path.is_dir() => {
-                    self.tab_mut().cwd = path.clone();
-                    self.log(format!("  {}", path.display()), LogKind::Info);
-                }
-                _ => self.log("Directory doesn't exist.", LogKind::Error),
-            }
-            return None;
-        }
-        if first.eq_ignore_ascii_case("pwd") {
-            self.log(self.tab().cwd.display().to_string(), LogKind::Info);
-            return None;
-        }
-        if first.eq_ignore_ascii_case("cls") || first.eq_ignore_ascii_case("clear") {
-            self.tab_mut().logs.clear();
-            return None;
-        }
-        if self.tab().running {
-            self.log("This workspace is busy. Ctrl+C cancels the process, or open a new tab with Ctrl+T.", LogKind::Error);
-            return None;
-        }
-        let custom = self.custom.get(first).cloned().map(|manifest| (manifest, words[1..].to_vec()));
-        let id = self.tab().id;
-        let cwd = self.tab().cwd.clone();
-        let cancel = commands::spawn_command(id, value, cwd, custom, self.tx.clone());
-        let tab = self.tab_mut();
-        tab.running = true;
-        tab.cancel = Some(cancel);
-        self.status = "running • Ctrl+C to cancel".into();
-        None
+    fn resize(&mut self, width: u16, height: u16) {
+        let (rows, cols) = shell_dimensions(width, height, self.settings.show_system_panel);
+        for tab in &mut self.tabs { tab.session.resize(rows, cols); }
     }
 
-    fn slash(&mut self, words: &[String]) -> Option<Action> {
-        let name = words[0].trim_start_matches('/').to_ascii_lowercase();
-        let arg = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+    fn control(&mut self, value: &str, width: u16, height: u16) {
+        let value = value.trim().trim_start_matches(['/', ':']);
+        let words = commands::split_words(value);
+        if words.is_empty() { return; }
+        let name = words[0].to_ascii_lowercase();
+        let arg = |i: usize| -> &str { words.get(i).map(String::as_str).unwrap_or("") };
         match name.as_str() {
-            "help" | "?" => {
-                self.log("COMMAND PALETTE  /  native Rust", LogKind::Accent);
-                for (name, description) in commands::BUILTINS {
-                    self.log(format!("  {name:<24} {description}"), LogKind::Normal);
-                }
-                self.log("Ctrl+T  new tab    Ctrl+W  close    Alt+1..9  switch tabs", LogKind::Info);
-                self.log("↑/↓  history    Tab  slash autocomplete    Ctrl+C  cancel    Ctrl+Q  exit", LogKind::Info);
-            }
-            "about" => {
-                self.log(format!("CuteTerm v{} / Rust / Windows 11", env!("CARGO_PKG_VERSION")), LogKind::Accent);
-                self.log("Pastel terminal workbench • real cmd.exe execution • custom command manifests.", LogKind::Info);
-                self.log("No PowerShell dependency. Windows Terminal provides acrylic blur and native window tabs.", LogKind::Muted);
-            }
-            "commands" => {
-                self.log(format!("{} CuteTerm slash actions • {} custom commands • {} actual PATH executables",
-                    commands::BUILTINS.len(), self.custom.len(), self.executables.len()), LogKind::Success);
-                self.log("Use /help for actions, /plugins for extensions, /find rust to search installed tools.", LogKind::Info);
-            }
-            "find" => {
-                let needle = arg(1).to_ascii_lowercase();
-                if needle.is_empty() {
-                    self.log("Usage: /find <search text>", LogKind::Error);
-                } else {
-                    let matches: Vec<_> = self.executables.iter().filter(|name| name.contains(&needle)).take(45).cloned().collect();
-                    self.log(format!("{} matching installed executables:", matches.len()), LogKind::Info);
-                    for name in matches { self.log(format!("  • {name}"), LogKind::Normal); }
-                }
-            }
-            "new" => self.new_tab(),
+            "help" | "?" => self.help = !self.help,
+            "about" => self.log(format!("CuteTerm {} • native Rust • ConPTY • Windows", env!("CARGO_PKG_VERSION"))),
+            "new" | "tabnew" => self.spawn_tab(
+                if arg(1).is_empty() { &self.settings.default_shell.clone() } else { arg(1) },
+                width, height),
             "tabs" => {
-                let summaries: Vec<_> = self.tabs.iter().enumerate().map(|(index, tab)| (index, tab.title.clone(), tab.running)).collect();
-                for (index, title, running) in summaries {
-                    self.log(format!("  {}. {}{}", index + 1, title, if running { "  (running)" } else { "" }), LogKind::Info);
-                }
+                let names = self.tabs.iter().enumerate().map(|(i,t)| format!("{}:{} ({})",i+1,t.title,t.session.shell)).collect::<Vec<_>>();
+                self.log(names.join(" · "));
             }
-            "tab" => match arg(1).parse::<usize>() {
-                Ok(number) if number > 0 && number <= self.tabs.len() => self.switch(number - 1),
-                _ => self.log("Usage: /tab <number>  •  Try /tabs", LogKind::Error),
-            },
+            "tab" => {
+                if let Ok(index) = arg(1).parse::<usize>() {
+                    if index > 0 && index <= self.tabs.len() { self.selected = index-1; }
+                    else { self.log("Tab number is out of range."); }
+                } else { self.log("Usage: :tab 2"); }
+            }
             "close" => self.close_tab(),
-            "rename" if !arg(1).is_empty() => self.tab_mut().title = words[1..].join(" ").chars().take(30).collect(),
-            "rename" => self.log("Usage: /rename <new tab title>", LogKind::Error),
-            "clear" => self.tab_mut().logs.clear(),
-            "cwd" => self.log(self.tab().cwd.display().to_string(), LogKind::Info),
-            "cd" => {
-                let directory = if arg(1).is_empty() { "~" } else { arg(1) };
-                let path = if directory == "~" {
-                    env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| self.tab().cwd.clone())
-                } else {
-                    let path = PathBuf::from(directory);
-                    if path.is_absolute() { path } else { self.tab().cwd.join(path) }
-                };
-                match path.canonicalize() {
-                    Ok(path) if path.is_dir() => {
-                        self.tab_mut().cwd = path.clone();
-                        self.log(format!("  {}", path.display()), LogKind::Success);
-                    }
-                    _ => self.log("That directory was not found.", LogKind::Error),
-                }
+            "rename" if !arg(1).is_empty() => {
+                self.tab_mut().title = words[1..].join(" ").chars().take(25).collect();
             }
-            "history" => {
-                let history = self.tab().history.iter().rev().take(25).cloned().collect::<Vec<_>>();
-                for item in history.into_iter().rev() { self.log(format!("  {item}"), LogKind::Muted); }
+            "rename" => self.log("Usage: :rename <tab title>"),
+            "shell" => {
+                let shell = if arg(1).is_empty() { "cmd.exe" } else { arg(1) };
+                self.spawn_tab(shell, width, height);
             }
             "theme" => {
                 if theme::validate(arg(1)) {
-                    self.settings.theme = arg(1).to_string();
+                    self.settings.theme = arg(1).to_owned();
                     self.save_settings();
-                    self.log(format!("Theme set to {}. Windows Terminal acrylic is configured by the installer.", arg(1)), LogKind::Success);
-                } else {
-                    self.log(format!("Choose: {}", theme::THEMES.join(" / ")), LogKind::Info);
-                }
+                    self.log(format!("Using theme {}.", arg(1)));
+                } else { self.log(format!("Themes: {}", theme::THEMES.join(" · "))); }
             }
-            "palette" => self.log(format!("Themes: {}", theme::THEMES.join("  •  ")), LogKind::Accent),
-            "animate" => match arg(1) {
-                "on" => { self.settings.animations = true; self.save_settings(); self.log("Animations enabled.", LogKind::Success); }
-                "off" => { self.settings.animations = false; self.save_settings(); self.log("Animations disabled.", LogKind::Success); }
-                _ => self.log("Usage: /animate on|off", LogKind::Error),
-            },
-            "config" => {
-                self.log(format!("Settings: {}", config::data_dir().join("config.json").display()), LogKind::Info);
-                self.log(format!("Theme: {} • animations: {} • updates: {} • check every {} hours",
-                    self.settings.theme, self.settings.animations, self.settings.update_mode, self.settings.update_check_hours), LogKind::Normal);
-            }
-            "system" => {
-                self.log(self.os.clone(), LogKind::Info);
-                self.log(format!("CPU: {}", self.cpu), LogKind::Normal);
-                self.log(format!("Memory: {}", self.memory), LogKind::Normal);
-                self.log(format!("Computer: {}", env::var("COMPUTERNAME").unwrap_or_default()), LogKind::Normal);
-            }
-            "shell" => {
-                let executable = if arg(1).is_empty() { self.settings.default_shell.clone() } else { arg(1).to_string() };
-                return Some(Action::InteractiveShell(executable));
-            }
-            "split" | "window" => {
-                let args: &[&str] = if name == "split" {
-                    &["-w", "0", "split-pane", "-p", "CuteTerm"]
-                } else {
-                    &["-w", "0", "new-tab", "-p", "CuteTerm"]
+            "palette" => self.log(format!("Themes: {}", theme::THEMES.join(" · "))),
+            "sidebar" => {
+                let state = match arg(1) {
+                    "on" => true, "off" => false,
+                    _ => !self.settings.show_system_panel,
                 };
-                match Command::new("wt.exe").args(args).spawn() {
-                    Ok(_) => self.log("Requested new Windows Terminal pane.", LogKind::Success),
-                    Err(error) => self.log(format!("Windows Terminal isn't available: {error}"), LogKind::Error),
+                self.settings.show_system_panel = state;
+                self.save_settings();
+                self.resize(width,height);
+                self.log(format!("System sidebar {}", if state {"on"} else {"off"}));
+            }
+            "animate" => {
+                self.settings.animations = match arg(1) { "on" => true, "off" => false, _ => !self.settings.animations };
+                self.save_settings();
+            }
+            "commands" => self.log(format!(
+                "{} CuteTerm palette actions · {} custom commands · {} PATH executables (counts are real)",
+                commands::BUILTINS.len(), self.custom.len(), self.executables.len())),
+            "find" => {
+                let needle = arg(1).to_ascii_lowercase();
+                if needle.is_empty() { self.log("Usage: :find <command>"); }
+                else {
+                    let matched = self.executables.iter().filter(|name| name.contains(&needle)).take(20).cloned().collect::<Vec<_>>();
+                    self.log(format!("Matching executables: {}", if matched.is_empty() { "(none)".into() } else { matched.join(", ") }));
                 }
             }
+            "system" => self.log(format!("{} • {} • memory {}", self.os, self.cpu, self.memory)),
+            "config" => self.log(format!("Settings: {}", config::data_dir().join("config.json").display())),
+            "cwd" => self.log("Shell CWD changes persist inside ConPTY. Type cd or cd /d in the shell to view/change it."),
             "plugins" => {
-                self.log(format!("Custom commands directory: {}", config::commands_dir().display()), LogKind::Info);
-                let listing: Vec<_> = self.custom.values().map(|c| format!("  /{:<16} {}", c.name, c.description)).collect();
-                for item in listing { self.log(item, LogKind::Normal); }
-                self.log("Create: /plugin new hello cmd.exe    •    Reload: /plugin reload", LogKind::Muted);
+                let names = self.custom.keys().cloned().collect::<Vec<_>>().join(", ");
+                self.log(format!("{} loaded command packs: {}", self.custom.len(), names));
             }
             "plugin" => match arg(1) {
-                "path" => self.log(config::commands_dir().display().to_string(), LogKind::Info),
+                "path" => self.log(format!("Custom commands: {}",config::commands_dir().display())),
                 "reload" => {
                     let (custom, warnings) = commands::load_custom_commands(&config::commands_dir());
                     self.custom = custom;
-                    self.log(format!("Loaded {} custom commands.", self.custom.len()), LogKind::Success);
-                    for warning in warnings { self.log(warning, LogKind::Error); }
+                    self.log(format!("Reloaded {} command manifests.", self.custom.len()));
+                    for warning in warnings { self.log(warning); }
                 }
-                "new" => match commands::create_custom_command(&config::commands_dir(), arg(2), arg(3)) {
-                    Ok(path) => self.log(format!("Created {}. Edit the JSON to set args, then /plugin reload.", path.display()), LogKind::Success),
-                    Err(error) => self.log(error.to_string(), LogKind::Error),
+                "new" => match commands::create_custom_command(&config::commands_dir(),arg(2),arg(3)) {
+                    Ok(path) => self.log(format!("Created {}. Edit its arguments, then :plugin reload.", path.display())),
+                    Err(error) => self.log(format!("Could not create extension: {error}")),
                 },
-                _ => self.log("Usage: /plugin new <name> <program> | /plugin reload | /plugin path", LogKind::Error),
+                _ => self.log("Usage: :plugin path | reload | new NAME PROGRAM"),
             },
-            "update" => match arg(1) {
-                "check" => return Some(Action::CheckUpdate(false)),
-                "install" => return Some(Action::CheckUpdate(true)),
-                "auto" | "notify" | "off" => {
-                    self.settings.update_mode = arg(1).to_string();
-                    self.save_settings();
-                    self.log(format!("Update mode set to {}.", arg(1)), LogKind::Success);
-                }
-                _ => self.log("Usage: /update check|install|auto|notify|off", LogKind::Error),
-            },
-            "exit" | "quit" => return Some(Action::Exit),
-            other => {
-                if let Some(manifest) = self.custom.get(other).cloned() {
-                    if self.tab().running {
-                        self.log("Workspace busy; use Ctrl+T to open another tab.", LogKind::Error);
-                    } else {
-                        let cancel = commands::spawn_command(self.tab().id, String::new(), self.tab().cwd.clone(),
-                            Some((manifest, words[1..].to_vec())), self.tx.clone());
-                        self.tab_mut().cancel = Some(cancel);
-                        self.tab_mut().running = true;
-                        self.status = "running custom command".into();
+            "run" => {
+                if let Some(item) = self.custom.get(arg(1)).cloned() {
+                    let arguments = words.iter().skip(2).cloned().collect::<Vec<_>>();
+                    // Run a custom command using an argument vector, not a shell-expanded string.
+                    let mut process = Command::new(&item.program);
+                    process.args(&item.args).args(arguments);
+                    match process.spawn() {
+                        Ok(child) => self.log(format!("Started '{}' with process ID {}.",item.name,child.id())),
+                        Err(error) => self.log(format!("Command could not be launched: {error}")),
                     }
-                } else {
-                    self.log(format!("Unknown slash command: /{other}. Try /help."), LogKind::Error);
+                } else { self.log("Usage: :run NAME  •  Use :plugins to see available commands"); }
+            }
+            "window" | "split" => {
+                let mut cmd = Command::new("wt.exe");
+                cmd.args(["-w", "0"]);
+                if name == "split" { cmd.args(["split-pane", "-p", "CuteTerm"]); }
+                else { cmd.args(["new-tab", "-p", "CuteTerm"]); }
+                match cmd.spawn() {
+                    Ok(_) => self.log("Requested a new Windows Terminal pane."),
+                    Err(error) => self.log(format!("Windows Terminal unavailable: {error}")),
                 }
             }
+            "update" => match arg(1) {
+                "check" => match update::check_for_updates(false, &self.settings) {
+                    Ok(result) => self.log(result), Err(error) => self.log(format!("Update check failed: {error}")),
+                },
+                "install" => match update::check_for_updates(true, &self.settings) {
+                    Ok(result) => {
+                        if result.starts_with("Update launched:") { self.should_exit = true; }
+                        self.log(result);
+                    },
+                    Err(error) => self.log(format!("Update failed: {error}")),
+                },
+                "auto" | "notify" | "off" => {
+                    self.settings.update_mode = arg(1).to_owned();
+                    self.save_settings();
+                    self.log(format!("Update mode: {}",arg(1)));
+                }
+                _ => self.log("Usage: :update check | install | auto | notify | off"),
+            },
+            "exit" | "quit" => self.should_exit = true,
+            "clear" => self.tab_mut().session.write(b"\x1b[2J\x1b[H\x1b[3J").ok().unwrap_or(()),
+            _ => self.log(format!("Unknown CuteTerm command '{name}'. Ctrl+G then type help.")),
         }
-        None
     }
 
     fn save_settings(&mut self) {
         if let Err(error) = config::save(&self.settings) {
-            self.log(format!("Settings could not be saved: {error}"), LogKind::Error);
+            self.log(format!("Couldn't save settings: {error}"));
         }
     }
 
-    fn complete(&mut self) {
-        let input = self.tab().input.clone();
-        if !input.starts_with('/') || input.contains(' ') { return; }
-        let possible: Vec<_> = commands::BUILTINS.iter()
-            .map(|(name, _)| *name)
-            .chain(self.custom.keys().map(String::as_str))
-            .filter(|candidate| candidate.starts_with(&input))
-            .collect();
-        if possible.len() == 1 {
-            let answer = possible[0].split_whitespace().next().unwrap_or(possible[0]).to_string();
-            self.tab_mut().input = format!("{answer} ");
-            self.tab_mut().cursor = self.tab().input.chars().count();
+    fn submit_palette(&mut self, width: u16, height: u16) {
+        let value = std::mem::take(&mut self.palette.text);
+        self.palette.open = false;
+        if value.trim().is_empty() { return; }
+        self.palette.history.push(value.clone());
+        if self.palette.history.len() > 100 { self.palette.history.remove(0); }
+        self.palette.history_index = self.palette.history.len();
+        self.control(&value,width,height);
+    }
+
+    fn key(&mut self, key: KeyEvent, width: u16, height: u16) {
+        if key.kind == KeyEventKind::Release { return; }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+
+        if ctrl && matches!(key.code,KeyCode::Char('q')) {
+            self.should_exit = true;
+            return;
+        }
+        if ctrl && matches!(key.code,KeyCode::Char('t')) {
+            self.spawn_tab(&self.settings.default_shell.clone(),width,height);
+            return;
+        }
+        if ctrl && matches!(key.code,KeyCode::Char('w')) {
+            self.close_tab();
+            return;
+        }
+        if alt && let KeyCode::Char(ch) = key.code
+            && ('1'..='9').contains(&ch) {
+            let index = ch.to_digit(10).unwrap() as usize-1;
+            if index < self.tabs.len() { self.selected = index; }
+            return;
+        }
+        if ctrl && matches!(key.code,KeyCode::Char('g')) {
+            self.palette.open = !self.palette.open;
+            self.help = false;
+            return;
+        }
+        if self.help {
+            if matches!(key.code,KeyCode::Esc|KeyCode::F(1)) { self.help=false; return; }
+        }
+        if self.palette.open {
+            match key.code {
+                KeyCode::Esc => self.palette.open = false,
+                KeyCode::Enter => self.submit_palette(width,height),
+                KeyCode::Backspace => { self.palette.text.pop(); }
+                KeyCode::Up => {
+                    if !self.palette.history.is_empty() {
+                        self.palette.history_index = self.palette.history_index.saturating_sub(1);
+                        self.palette.text = self.palette.history[self.palette.history_index].clone();
+                    }
+                }
+                KeyCode::Down => {
+                    if !self.palette.history.is_empty() {
+                        self.palette.history_index=(self.palette.history_index+1).min(self.palette.history.len());
+                        self.palette.text = self.palette.history.get(self.palette.history_index).cloned().unwrap_or_default();
+                    }
+                }
+                KeyCode::Tab => {
+                    let typed=self.palette.text.trim_start_matches([':', '/']);
+                    if !typed.contains(' ') {
+                        let matches:Vec<_>=commands::BUILTINS.iter()
+                            .map(|(name,_)| name.trim_start_matches('/').split_whitespace().next().unwrap_or(""))
+                            .filter(|name| name.starts_with(typed)).collect();
+                        if matches.len()==1 { self.palette.text=matches[0].to_string()+" "; }
+                    }
+                }
+                KeyCode::Char(c) if !ctrl && !alt => self.palette.text.push(c),
+                _ => {}
+            }
+            return;
+        }
+
+        if key.code == KeyCode::F(1) { self.help = !self.help; return; }
+        if shift && key.code == KeyCode::PageUp {
+            self.tab_mut().session.scroll(8);
+            return;
+        }
+        if shift && key.code == KeyCode::PageDown {
+            self.tab_mut().session.scroll(-8);
+            return;
+        }
+        if !self.tab().session.alive {
+            self.log("This shell exited. Use Ctrl+T for a new shell or Ctrl+G :shell cmd.exe.");
+            return;
+        }
+
+        let application = self.tab().session.parser.screen().application_cursor();
+        if let Some(bytes) = encode_key(key,application) {
+            if let Err(error) = self.tab_mut().session.write(&bytes) {
+                self.log(format!("Couldn't send keyboard input to ConPTY: {error}"));
+            } else {
+                self.tab_mut().session.reset_scrollback();
+            }
         }
     }
 
-    fn key(&mut self, key: KeyEvent) -> Option<Action> {
-        if key.kind == KeyEventKind::Release { return None; }
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('q'), m) if m.contains(KeyModifiers::CONTROL) => return Some(Action::Exit),
-            (KeyCode::Char('t'), m) if m.contains(KeyModifiers::CONTROL) => self.new_tab(),
-            (KeyCode::Char('w'), m) if m.contains(KeyModifiers::CONTROL) => self.close_tab(),
-            (KeyCode::Char('l'), m) if m.contains(KeyModifiers::CONTROL) => self.tab_mut().logs.clear(),
-            (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
-                if let Some(cancel) = &self.tab().cancel {
-                    let _ = cancel.send(());
-                    self.log("Stopping process…", LogKind::Muted);
-                } else {
-                    self.tab_mut().input.clear();
-                    self.tab_mut().cursor = 0;
-                }
-            }
-            (KeyCode::Char('a'), m) if m.contains(KeyModifiers::CONTROL) => self.tab_mut().cursor = 0,
-            (KeyCode::Char('e'), m) if m.contains(KeyModifiers::CONTROL) =>
-                self.tab_mut().cursor = self.tab().input.chars().count(),
-            (KeyCode::Char(n), m) if m.contains(KeyModifiers::ALT) && ('1'..='9').contains(&n) =>
-                self.switch(n.to_digit(10).unwrap() as usize - 1),
-            (KeyCode::Enter, _) => return self.submit(),
-            (KeyCode::F(1), _) => return self.slash(&["/help".into()]),
-            (KeyCode::Tab, _) => self.complete(),
-            (KeyCode::Up, _) => {
-                let tab = self.tab_mut();
-                if !tab.history.is_empty() {
-                    tab.history_pos = tab.history_pos.saturating_sub(1);
-                    tab.input = tab.history[tab.history_pos].clone();
-                    tab.cursor = tab.input.chars().count();
-                }
-            }
-            (KeyCode::Down, _) => {
-                let tab = self.tab_mut();
-                if !tab.history.is_empty() {
-                    tab.history_pos = (tab.history_pos + 1).min(tab.history.len());
-                    tab.input = if tab.history_pos < tab.history.len() {
-                        tab.history[tab.history_pos].clone()
-                    } else { String::new() };
-                    tab.cursor = tab.input.chars().count();
-                }
-            }
-            (KeyCode::PageUp, _) => self.tab_mut().scroll = self.tab().scroll.saturating_add(10),
-            (KeyCode::PageDown, _) => self.tab_mut().scroll = self.tab().scroll.saturating_sub(10),
-            (KeyCode::Left, _) => self.tab_mut().cursor = self.tab().cursor.saturating_sub(1),
-            (KeyCode::Right, _) => {
-                self.tab_mut().cursor = (self.tab().cursor + 1).min(self.tab().input.chars().count());
-            }
-            (KeyCode::Home, _) => self.tab_mut().cursor = 0,
-            (KeyCode::End, _) => self.tab_mut().cursor = self.tab().input.chars().count(),
-            (KeyCode::Backspace, _) => {
-                let tab = self.tab_mut();
-                if tab.cursor > 0 {
-                    let pos = byte_index(&tab.input, tab.cursor - 1);
-                    tab.input.remove(pos);
-                    tab.cursor -= 1;
-                }
-            }
-            (KeyCode::Delete, _) => {
-                let tab = self.tab_mut();
-                if tab.cursor < tab.input.chars().count() {
-                    let pos = byte_index(&tab.input, tab.cursor);
-                    tab.input.remove(pos);
-                }
-            }
-            (KeyCode::Char(ch), m) if !m.contains(KeyModifiers::CONTROL) && !m.contains(KeyModifiers::ALT) => {
-                let tab = self.tab_mut();
-                let pos = byte_index(&tab.input, tab.cursor);
-                tab.input.insert(pos, ch);
-                tab.cursor += 1;
-            }
-            _ => {}
-        }
-        None
-    }
-
-    fn draw(&self, frame: &mut ratatui::Frame) {
-        let colors = theme::palette(&self.settings.theme);
-        let area = frame.area();
-        frame.render_widget(Block::default().style(Style::default().bg(colors.background)), area);
+    fn draw(&self, frame: &mut Frame) {
+        let palette = theme::palette(&self.settings.theme);
+        let bounds=frame.area();
+        frame.render_widget(Block::default().style(Style::default().bg(palette.background)),bounds);
         let rows = Layout::default().direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(2), Constraint::Min(7),
-                Constraint::Length(4), Constraint::Length(2)]).split(area);
+            .constraints([Constraint::Length(2),Constraint::Length(2),
+                Constraint::Min(4),Constraint::Length(2)]).split(bounds);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" ✦ cute",Style::default().fg(palette.pink).add_modifier(Modifier::BOLD)),
+                Span::styled("term",Style::default().fg(palette.cyan).add_modifier(Modifier::BOLD)),
+                Span::styled("  /  native Rust terminal  ",Style::default().fg(palette.muted)),
+                Span::styled(format!("v{}",env!("CARGO_PKG_VERSION")),Style::default().fg(palette.green)),
+            ])).style(Style::default().bg(palette.surface)),
+            rows[0]);
 
-        let title = Line::from(vec![
-            Span::styled(" ✦ cuteterm ", Style::default().fg(colors.pink).add_modifier(Modifier::BOLD)),
-            Span::styled(" / ", Style::default().fg(colors.muted)),
-            Span::styled("Rust-native workspace", Style::default().fg(colors.text)),
-            Span::styled(format!("     v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(colors.muted)),
-        ]);
-        let header = Paragraph::new(title).block(
-            Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(colors.border))
-        ).style(Style::default().bg(colors.surface));
-        frame.render_widget(header, rows[0]);
-
-        let mut tabs = vec![Span::styled("  ", Style::default())];
-        for (index, tab) in self.tabs.iter().enumerate().take(9) {
-            let selected = index == self.selected;
-            tabs.push(Span::styled(
-                format!(" {} {} {} ", if selected { "●" } else { "○" }, tab.title, if tab.running { "⋯" } else { "" }),
-                Style::default().fg(if selected { colors.pink } else { colors.muted })
-                    .bg(if selected { colors.surface } else { colors.background })
+        let mut tab_spans = vec![Span::raw(" ")];
+        for (index,tab) in self.tabs.iter().enumerate().take(9) {
+            let active=index==self.selected;
+            tab_spans.push(Span::styled(
+                format!(" {} {} ",if active {"●"} else {"○"},tab.title),
+                Style::default().fg(if active {palette.pink} else {palette.muted})
+                    .bg(if active {palette.surface} else {palette.background})
+                    .add_modifier(if active {Modifier::BOLD} else {Modifier::empty()}),
             ));
-            tabs.push(Span::raw(" "));
+            tab_spans.push(Span::raw(" "));
         }
-        tabs.push(Span::styled(" + Ctrl+T", Style::default().fg(colors.cyan)));
-        frame.render_widget(Paragraph::new(Line::from(tabs)), rows[1]);
+        tab_spans.push(Span::styled("  + Ctrl+T",Style::default().fg(palette.cyan)));
+        frame.render_widget(Paragraph::new(Line::from(tab_spans)), rows[1]);
 
-        if self.settings.show_system_panel && rows[2].width >= 86 {
-            let panes = Layout::default().direction(Direction::Horizontal)
-                .constraints([Constraint::Length(34), Constraint::Min(15)]).split(rows[2]);
-            frame.render_widget(self.system_panel(colors), panes[0]);
-            self.draw_output(frame, panes[1], colors);
-        } else { self.draw_output(frame, rows[2], colors); }
-
-        let prefix = "  ❯ ";
-        let input = &self.tab().input;
-        let prompt = Paragraph::new(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(colors.pink).add_modifier(Modifier::BOLD)),
-            Span::styled(input.clone(), Style::default().fg(colors.text)),
-            Span::styled("▋", Style::default().fg(colors.pink))
-        ])).block(Block::default().title(Span::styled(" command ", Style::default().fg(colors.pink)))
-                .borders(Borders::ALL).border_style(Style::default().fg(colors.border)))
-            .style(Style::default().bg(colors.surface));
-        frame.render_widget(prompt, rows[3]);
-        let footer = Line::from(vec![
-            Span::styled(format!("  {}  ", self.status), Style::default().fg(colors.green)),
-            Span::styled("Ctrl+T tab  Alt+1..9 switch  /help commands  /shell interactive  Ctrl+Q quit", Style::default().fg(colors.muted)),
+        let panes=main_panes(rows[2],self.settings.show_system_panel);
+        if panes.0.is_some() {
+            self.draw_sidebar(frame,panes.0.unwrap(),palette);
+        }
+        self.draw_shell(frame,panes.1,palette);
+        let status=self.messages.back().map(String::as_str).unwrap_or("");
+        let footer=Line::from(vec![
+            Span::styled("  Ctrl+G  ",Style::default().fg(palette.pink).add_modifier(Modifier::BOLD)),
+            Span::styled("palette   ",Style::default().fg(palette.muted)),
+            Span::styled("Ctrl+T",Style::default().fg(palette.cyan)),
+            Span::styled(" tab   ",Style::default().fg(palette.muted)),
+            Span::styled("Alt+1–9",Style::default().fg(palette.cyan)),
+            Span::styled(" switch   ",Style::default().fg(palette.muted)),
+            Span::styled("Ctrl+Q",Style::default().fg(palette.cyan)),
+            Span::styled(" quit",Style::default().fg(palette.muted)),
         ]);
-        frame.render_widget(Paragraph::new(footer), rows[4]);
+        frame.render_widget(Paragraph::new(vec![
+            footer,
+            Line::styled(truncate(status,bounds.width.saturating_sub(2) as usize),Style::default().fg(palette.green))
+        ]).style(Style::default().bg(palette.surface)),rows[3]);
+
+        if self.help { self.draw_help(frame,palette); }
+        if self.palette.open { self.draw_palette(frame,palette); }
     }
 
-    fn system_panel(&self, colors: Palette) -> Paragraph<'static> {
-        let stars = ['✦', '✧', '⋆', '✳'];
-        let index = if self.settings.animations { (self.started.elapsed().as_millis() / 380) as usize % stars.len() } else { 0 };
-        let intro = vec![
-            Line::styled(format!("   {}  cute space", stars[index]), Style::default().fg(colors.pink).add_modifier(Modifier::BOLD)),
-            Line::styled("", Style::default()),
-            Line::styled("      /\\_/\\", Style::default().fg(colors.cyan)),
-            Line::styled("     ( o.o )    ✧", Style::default().fg(colors.pink)),
-            Line::styled("      > ^ < ", Style::default().fg(colors.yellow)),
-            Line::styled("", Style::default()),
-            Line::styled("  ──────────────────────", Style::default().fg(colors.border)),
-            Line::styled("  WINDOWS", Style::default().fg(colors.pink)),
-            Line::styled(format!("  {}", truncate(&self.os, 27)), Style::default().fg(colors.text)),
-            Line::styled("", Style::default()),
-            Line::styled("  PROCESSOR", Style::default().fg(colors.pink)),
-            Line::styled(format!("  {}", truncate(&self.cpu, 27)), Style::default().fg(colors.text)),
-            Line::styled("", Style::default()),
-            Line::styled("  MEMORY", Style::default().fg(colors.pink)),
-            Line::styled(format!("  {}", self.memory), Style::default().fg(colors.green)),
-            Line::styled("", Style::default()),
-            Line::styled(format!("  ● ● ● ●  {}", self.settings.theme), Style::default().fg(colors.cyan)),
-            Line::styled(format!("  {} real PATH commands", self.executables.len()), Style::default().fg(colors.muted)),
-            Line::styled(format!("  {} custom commands", self.custom.len()), Style::default().fg(colors.muted)),
+    fn draw_sidebar(&self,frame:&mut Frame,area:Rect,p:Palette) {
+        let index=if self.settings.animations { (self.started.elapsed().as_millis()/380) as usize % 4 } else {0};
+        let sparkle=["✦","✧","⋆","✳"][index];
+        let stats=vec![
+            Line::styled(format!("  {sparkle} CUTE SPACE"),Style::default().fg(p.pink).add_modifier(Modifier::BOLD)),
+            Line::raw(""),
+            Line::styled("    /\\_/\\",Style::default().fg(p.cyan)),
+            Line::styled("   ( o.o )",Style::default().fg(p.pink)),
+            Line::styled("    > ^ <  ✧",Style::default().fg(p.yellow)),
+            Line::raw(""),
+            Line::styled("  ──────────────────",Style::default().fg(p.border)),
+            Line::styled("  WINDOWS",Style::default().fg(p.pink)),
+            Line::styled(format!("  {}",truncate(&self.os,23)),Style::default().fg(p.text)),
+            Line::raw(""),
+            Line::styled("  PROCESSOR",Style::default().fg(p.pink)),
+            Line::styled(format!("  {}",truncate(&self.cpu,23)),Style::default().fg(p.text)),
+            Line::raw(""),
+            Line::styled("  MEMORY",Style::default().fg(p.pink)),
+            Line::styled(format!("  {}",self.memory),Style::default().fg(p.green)),
+            Line::raw(""),
+            Line::styled("  ● ● ● ● ● ● ●",Style::default().fg(p.cyan)),
+            Line::styled(format!("  theme: {}",self.settings.theme),Style::default().fg(p.muted)),
+            Line::styled(format!("  {} PATH commands",self.executables.len()),Style::default().fg(p.muted)),
+            Line::styled(format!("  {} custom scripts",self.custom.len()),Style::default().fg(p.muted)),
         ];
-        Paragraph::new(intro).block(Block::default()
-            .borders(Borders::RIGHT).border_style(Style::default().fg(colors.border)))
-            .style(Style::default().bg(colors.background))
+        frame.render_widget(Paragraph::new(stats).style(Style::default().bg(p.background)).block(
+            Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(p.border))
+        ),area);
     }
 
-    fn draw_output(&self, frame: &mut ratatui::Frame, area: Rect, colors: Palette) {
-        let inner_height = usize::from(area.height.saturating_sub(2));
-        let tab = self.tab();
-        let take = inner_height.max(1);
-        let total = tab.logs.len();
-        let end = total.saturating_sub(tab.scroll.min(total));
-        let start = end.saturating_sub(take);
-        let lines: Vec<Line<'_>> = tab.logs.range(start..end).map(|entry| {
-            let color = match entry.kind {
-                LogKind::Normal => colors.text,
-                LogKind::Accent => colors.pink,
-                LogKind::Info => colors.cyan,
-                LogKind::Success => colors.green,
-                LogKind::Error => colors.red,
-                LogKind::Muted => colors.muted,
-            };
-            Line::styled(entry.text.as_str(), Style::default().fg(color))
-        }).collect();
-        let block = Block::default().title(Span::styled(" output • scroll PgUp/PgDn ", Style::default().fg(colors.muted)))
-            .borders(Borders::ALL).border_style(Style::default().fg(colors.border))
-            .style(Style::default().bg(colors.background));
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).block(block), area);
+    fn draw_shell(&self,frame:&mut Frame,area:Rect,p:Palette) {
+        let tab=self.tab();
+        let title=format!(" {} • {} ",tab.title, if tab.session.alive {"ConPTY live"} else {"shell exited"});
+        let inner=Block::default().title(Span::styled(title,Style::default().fg(p.cyan)))
+            .borders(Borders::ALL).border_style(Style::default().fg(p.border)).inner(area);
+        // Render the vt100 cell buffer with its actual foreground/background styling.
+        let screen=tab.session.parser.screen();
+        let rows=inner.height.min(screen.size().0.get());
+        let cols=inner.width.min(screen.size().1.get());
+        let mut output=Vec::new();
+        for row in 0..rows {
+            let mut spans=Vec::with_capacity(cols as usize);
+            for col in 0..cols {
+                let Some(cell)=screen.cell(row,col) else { continue; };
+                if cell.is_wide_continuation() { continue; }
+                let fg=terminal_color(cell.fgcolor(),p.text);
+                let bg=terminal_color(cell.bgcolor(),p.background);
+                let mut style=Style::default().fg(fg).bg(bg);
+                if cell.bold() { style=style.add_modifier(Modifier::BOLD); }
+                if cell.dim() { style=style.add_modifier(Modifier::DIM); }
+                if cell.italic() { style=style.add_modifier(Modifier::ITALIC); }
+                if cell.underline() { style=style.add_modifier(Modifier::UNDERLINED); }
+                if cell.inverse() { style=style.add_modifier(Modifier::REVERSED); }
+                let value=if cell.has_contents() { cell.contents() } else {" "};
+                spans.push(Span::styled(value.to_owned(),style));
+            }
+            output.push(Line::from(spans));
+        }
+        frame.render_widget(Paragraph::new(output).block(
+            Block::default().title(Span::styled(format!(" {} ",tab.title),Style::default().fg(p.cyan)))
+                .borders(Borders::ALL).border_style(Style::default().fg(p.border))
+        ),area);
+        if !self.palette.open && !self.help && !screen.hide_cursor() {
+            let (cy,cx)=screen.cursor_position();
+            if cy<rows && cx<cols {
+                frame.set_cursor_position((inner.x+cx,inner.y+cy));
+            }
+        }
+    }
+
+    fn draw_help(&self,frame:&mut Frame,p:Palette) {
+        let area=center(frame.area(),78,75);
+        frame.render_widget(Clear,area);
+        let mut lines=vec![
+            Line::styled(" CuteTerm • full Windows terminal controls",Style::default().fg(p.pink).add_modifier(Modifier::BOLD)),
+            Line::raw(""),
+        ];
+        for (command,description) in commands::BUILTINS {
+            lines.push(Line::from(vec![
+                Span::styled(format!("{command:<24}"),Style::default().fg(p.cyan)),
+                Span::styled(*description,Style::default().fg(p.text)),
+            ]));
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(" Ctrl+G palette • Ctrl+T new tab • Ctrl+W close • Alt+1-9 switch • F1/Esc dismiss",Style::default().fg(p.green)));
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap{trim:false}).scroll((0,0))
+            .block(Block::default().title(" commands ").borders(Borders::ALL).border_style(Style::default().fg(p.pink)))
+            .style(Style::default().bg(p.surface)),area);
+    }
+
+    fn draw_palette(&self,frame:&mut Frame,p:Palette) {
+        let full=frame.area();
+        let area=Rect {
+            x:full.x+full.width.saturating_sub(full.width.min(82))/2,
+            y:full.y+full.height.saturating_sub(5)/2,
+            width:full.width.min(82),
+            height:5.min(full.height)
+        };
+        frame.render_widget(Clear,area);
+        let typed=format!(" :{}▋",self.palette.text);
+        let lines=vec![
+            Line::styled(typed,Style::default().fg(p.text).add_modifier(Modifier::BOLD)),
+            Line::styled(" Enter to run • Esc to cancel • Tab to complete • :help for commands",Style::default().fg(p.muted))
+        ];
+        frame.render_widget(Paragraph::new(lines).block(
+            Block::default().title(" ✦ CuteTerm command palette ").borders(Borders::ALL).border_style(Style::default().fg(p.pink)))
+            .style(Style::default().bg(p.surface)),area);
     }
 }
 
-fn truncate(s: &str, limit: usize) -> String {
-    let count = s.chars().count();
-    if count <= limit { s.to_string() }
-    else { format!("{}…", s.chars().take(limit.saturating_sub(1)).collect::<String>()) }
+fn terminal_color(color: vt100::Color, fallback: Color) -> Color {
+    match color {
+        vt100::Color::Default => fallback,
+        vt100::Color::Idx(n) => Color::Indexed(n),
+        vt100::Color::Rgb(r,g,b) => Color::Rgb(r,g,b),
+    }
 }
 
-fn byte_index(s: &str, char_index: usize) -> usize {
-    s.char_indices().nth(char_index).map(|(n, _)| n).unwrap_or(s.len())
+fn truncate(s:&str,n:usize)->String {
+    if s.chars().count()<=n {s.to_string()}
+    else {format!("{}…",s.chars().take(n.saturating_sub(1)).collect::<String>())}
 }
 
-pub fn run(settings: Settings) -> io::Result<()> {
-    let mut app = App::new(settings);
-    let mut terminal = ratatui::init();
-    let result = run_loop(&mut terminal, &mut app);
+fn center(bounds:Rect,width_percent:u16,height_percent:u16)->Rect {
+    let width=bounds.width.saturating_mul(width_percent).saturating_div(100).max(1);
+    let height=bounds.height.saturating_mul(height_percent).saturating_div(100).max(1);
+    Rect {x:bounds.x+(bounds.width-width)/2,y:bounds.y+(bounds.height-height)/2,width,height}
+}
+
+fn main_panes(area:Rect,sidebar:bool)->(Option<Rect>,Rect) {
+    if sidebar && area.width >= 95 {
+        let cols=Layout::default().direction(Direction::Horizontal)
+            .constraints([Constraint::Length(28),Constraint::Min(20)]).split(area);
+        (Some(cols[0]),cols[1])
+    } else {(None,area)}
+}
+
+fn shell_dimensions(width:u16,height:u16,sidebar:bool)->(u16,u16) {
+    let shell_width=if sidebar && width>=95 {width.saturating_sub(28)} else {width};
+    (height.saturating_sub(8).max(2),shell_width.saturating_sub(2).max(10))
+}
+
+fn encode_key(key:KeyEvent,application:bool)->Option<Vec<u8>> {
+    let ctrl=key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt=key.modifiers.contains(KeyModifiers::ALT);
+    let bytes=match key.code {
+        KeyCode::Enter => b"\r".to_vec(),
+        KeyCode::Tab => b"\t".to_vec(),
+        KeyCode::BackTab => b"\x1b[Z".to_vec(),
+        KeyCode::Esc => b"\x1b".to_vec(),
+        KeyCode::Backspace => b"\x7f".to_vec(),
+        KeyCode::Delete => b"\x1b[3~".to_vec(),
+        KeyCode::Insert => b"\x1b[2~".to_vec(),
+        KeyCode::Home => b"\x1b[H".to_vec(),
+        KeyCode::End => b"\x1b[F".to_vec(),
+        KeyCode::PageUp => b"\x1b[5~".to_vec(),
+        KeyCode::PageDown => b"\x1b[6~".to_vec(),
+        KeyCode::Up => if application {b"\x1bOA".to_vec()} else {b"\x1b[A".to_vec()},
+        KeyCode::Down => if application {b"\x1bOB".to_vec()} else {b"\x1b[B".to_vec()},
+        KeyCode::Right => if application {b"\x1bOC".to_vec()} else {b"\x1b[C".to_vec()},
+        KeyCode::Left => if application {b"\x1bOD".to_vec()} else {b"\x1b[D".to_vec()},
+        KeyCode::F(1) => b"\x1bOP".to_vec(),
+        KeyCode::F(2) => b"\x1bOQ".to_vec(),
+        KeyCode::F(3) => b"\x1bOR".to_vec(),
+        KeyCode::F(4) => b"\x1bOS".to_vec(),
+        KeyCode::F(5) => b"\x1b[15~".to_vec(),
+        KeyCode::F(6) => b"\x1b[17~".to_vec(),
+        KeyCode::F(7) => b"\x1b[18~".to_vec(),
+        KeyCode::F(8) => b"\x1b[19~".to_vec(),
+        KeyCode::F(9) => b"\x1b[20~".to_vec(),
+        KeyCode::F(10) => b"\x1b[21~".to_vec(),
+        KeyCode::F(11) => b"\x1b[23~".to_vec(),
+        KeyCode::F(12) => b"\x1b[24~".to_vec(),
+        KeyCode::Char(c) if ctrl && c.is_ascii_alphabetic() => vec![(c.to_ascii_lowercase() as u8)-b'a'+1],
+        KeyCode::Char(c) if !ctrl => {
+            let mut out=Vec::new();
+            if alt {out.push(0x1b);}
+            let mut utf8=[0_u8;4];
+            out.extend_from_slice(c.encode_utf8(&mut utf8).as_bytes());
+            out
+        }
+        _ => return None,
+    };
+    Some(bytes)
+}
+
+pub fn run(settings:Settings)->io::Result<()> {
+    let size=crossterm::terminal::size()?;
+    let mut app=App::new(settings,size.0,size.1)?;
+    let mut terminal=ratatui::init();
+    let result=run_loop(&mut terminal,&mut app);
     ratatui::restore();
     result
 }
 
-fn run_loop(terminal: &mut DefaultTerminal, app: &mut App) -> io::Result<()> {
-    loop {
-        app.advance();
-        terminal.draw(|frame| app.draw(frame))?;
-        if event::poll(FRAME_TIME)? && let Event::Key(key) = event::read()?
-            && let Some(action) = app.key(key) {
-            match action {
-                Action::Exit => break,
-                Action::InteractiveShell(shell) => {
-                    ratatui::restore();
-                    let current = app.tab().cwd.clone();
-                    println!("\nEntering interactive {shell}. Type exit to return to CuteTerm.\n");
-                    let result = commands::launch_interactive_shell(&shell, &current);
-                    if let Err(error) = result {
-                        println!("Cannot open {shell}: {error}");
-                    }
-                    *terminal = ratatui::init();
-                    app.log(format!("Returned from {shell}."), LogKind::Success);
-                }
-                Action::CheckUpdate(install) => {
-                    ratatui::restore();
-                    let outcome = update::check_for_updates(install, &app.settings);
-                    match outcome {
-                        Ok(message) => {
-                            println!("{message}");
-                            if message.starts_with("Update launched:") { return Ok(()); }
-                            app.log(message, LogKind::Info);
-                        }
-                        Err(error) => {
-                            println!("Update unavailable: {error}");
-                            app.log(format!("Update unavailable: {error}"), LogKind::Error);
+fn run_loop(terminal:&mut DefaultTerminal,app:&mut App)->io::Result<()> {
+    execute!(io::stdout(),EnableBracketedPaste,EnableMouseCapture)?;
+    let result=(|| {
+        loop {
+            for tab in &mut app.tabs {tab.session.poll();}
+            let size=terminal.size()?;
+            app.resize(size.width,size.height);
+            terminal.draw(|frame|app.draw(frame))?;
+            if app.should_exit {break;}
+            if event::poll(TICK)? {
+                match event::read()? {
+                    Event::Key(key)=>app.key(key,size.width,size.height),
+                    Event::Resize(width,height)=>app.resize(width,height),
+                    Event::Mouse(mouse)=>match mouse.kind {
+                        MouseEventKind::ScrollUp=>app.tab_mut().session.scroll(4),
+                        MouseEventKind::ScrollDown=>app.tab_mut().session.scroll(-4),
+                        _=>{},
+                    },
+                    Event::Paste(text)=>{
+                        if app.palette.open {
+                            app.palette.text.push_str(&text.replace(['\r','\n']," "));
+                        } else if app.tab().session.alive {
+                            let bracketed=app.tab().session.parser.screen().bracketed_paste();
+                            if bracketed {app.tab_mut().session.write(b"\x1b[200~")?;}
+                            app.tab_mut().session.write(text.as_bytes())?;
+                            if bracketed {app.tab_mut().session.write(b"\x1b[201~")?;}
                         }
                     }
-                    *terminal = ratatui::init();
+                    _=>{},
                 }
             }
         }
-    }
-    Ok(())
+        Ok(())
+    })();
+    let _=execute!(io::stdout(),DisableBracketedPaste,DisableMouseCapture);
+    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn text_control_codes_are_removed() {
-        assert_eq!(clean_text("hi\u{1b}[31m"), "hi[31m");
+    fn basic_keyboard_encoding() {
+        assert_eq!(encode_key(KeyEvent::new(KeyCode::Enter,KeyModifiers::NONE),false),Some(vec![13]));
+        assert_eq!(encode_key(KeyEvent::new(KeyCode::Char('c'),KeyModifiers::CONTROL),false),Some(vec![3]));
+        assert_eq!(encode_key(KeyEvent::new(KeyCode::Up,KeyModifiers::NONE),true),Some(b"\x1bOA".to_vec()));
     }
     #[test]
-    fn handles_unicode_cursor_positions() {
-        assert_eq!(byte_index("a✦b", 2), 4);
-        assert_eq!(truncate("hello", 3), "he…");
+    fn dimensions_are_reasonable() {
+        assert_eq!(shell_dimensions(120,40,true),(32,90));
+        assert_eq!(shell_dimensions(80,30,true),(22,78));
     }
 }
