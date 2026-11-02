@@ -107,16 +107,20 @@ impl App {
     fn tab_mut(&mut self) -> &mut Tab { &mut self.tabs[self.selected] }
 
     fn spawn_tab(&mut self, shell: &str, width: u16, height: u16) {
+        self.spawn_tab_args(shell, &[], width, height);
+    }
+
+    fn spawn_tab_args(&mut self, shell: &str, args: &[String], width: u16, height: u16) {
         let dims = shell_dimensions(width, height, self.settings.show_system_panel);
         let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        match ShellSession::spawn(shell, &cwd, dims.0, dims.1) {
+        match ShellSession::spawn_argv(shell, args, &cwd, dims.0, dims.1) {
             Ok(session) => {
                 let id = self.next_id;
                 self.next_id += 1;
                 self.tabs.push(Tab { id, title: format!("{shell} #{id}"), session });
                 self.selected = self.tabs.len()-1;
                 self.help = false;
-                self.log(format!("Started an independent {shell} ConPTY tab."));
+                self.log(format!("Started {shell} in an independent ConPTY tab."));
             }
             Err(error) => self.log(format!("Could not launch {shell}: {error}")),
         }
@@ -226,14 +230,10 @@ impl App {
             },
             "run" => {
                 if let Some(item) = self.custom.get(arg(1)).cloned() {
-                    let arguments = words.iter().skip(2).cloned().collect::<Vec<_>>();
-                    // Run a custom command using an argument vector, not a shell-expanded string.
-                    let mut process = Command::new(&item.program);
-                    process.args(&item.args).args(arguments);
-                    match process.spawn() {
-                        Ok(child) => self.log(format!("Started '{}' with process ID {}.",item.name,child.id())),
-                        Err(error) => self.log(format!("Command could not be launched: {error}")),
-                    }
+                    let mut arguments = item.args.clone();
+                    arguments.extend(words.iter().skip(2).cloned());
+                    // Interactive custom programs receive their own PTY, stdin and output.
+                    self.spawn_tab_args(&item.program, &arguments, width, height);
                 } else { self.log("Usage: :run NAME  •  Use :plugins to see available commands"); }
             }
             "window" | "split" => {
