@@ -1,0 +1,47 @@
+{
+  "profiles": [
+    {
+      "name": "CuteTerm",
+      "guid": "{F0CCF87A-FD71-4ED4-95BF-EA56818DEAE9}",
+      "commandline": "%LOCALAPPDATA%\\Programs\\CuteTerm\\cuteterm.exe",
+      "startingDirectory": "%USERPROFILE%",
+      "hidden": false,
+      "tabTitle": "✦ CuteTerm",
+      "colorScheme": "CuteTerm Arctic",
+      "useAcrylic": true,
+      "opacity": 79,
+      "acrylicOpacity": 0.79,
+      "font": {
+        "face": "Cascadia Mono",
+        "size": 11
+      },
+      "cursorShape": "bar",
+      "padding": "13, 10, 13, 10"
+    }
+  ],
+  "schemes": [
+    {
+      "name": "CuteTerm Arctic",
+      "background": "#1C1E2D",
+      "foreground": "#E6E9F5",
+      "cursorColor": "#F3AACB",
+      "selectionBackground": "#50546C",
+      "black": "#141522",
+      "red": "#FFA1B5",
+      "green": "#A6DEBF",
+      "yellow": "#F2D49E",
+      "blue": "#9BDDE9",
+      "purple": "#F3AACB",
+      "cyan": "#9BDDE9",
+      "white": "#E6E9F5",
+      "brightBlack": "#767C96",
+      "brightRed": "#FFB1C5",
+      "brightGreen": "#B8F5D4",
+      "brightYellow": "#FFE4B2",
+      "brightBlue": "#B6EFFF",
+      "brightPurple": "#FFD0E7",
+      "brightCyan": "#B6EFFF",
+      "brightWhite": "#FFFFFF"
+    }
+  ]
+}
