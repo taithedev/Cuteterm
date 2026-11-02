@@ -1,0 +1,8 @@
+{
+  "name": "cargo-check",
+  "description": "Type-check the current Rust project (requires Rust)",
+  "program": "cargo.exe",
+  "args": [
+    "check"
+  ]
+}
