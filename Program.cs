@@ -1,12 +1,15 @@
 using System;
 using System.Windows.Forms;
+
 namespace CuteTerm;
+
 internal static class Program
 {
     [STAThread]
-    static void Main()
+    private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.Run(new TerminalForm());
     }
 }
