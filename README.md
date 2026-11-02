@@ -70,9 +70,9 @@ Inside CuteTerm:
     ct tab
     ct split
 
-CuteTerm includes **over 150 named command functions** in the cli/commands folder. You can also run **every real command exposed by your installed PowerShell and external tools**, including cmdlets, aliases, modules, applications, pipelines and interactive tools. On a typical Windows PowerShell 7 installation, this gives far more than 355 usable commands; the exact count varies by installed modules. Run **ct count** for the *actual live count*, and **ct commands -All** for the names. Counts are never inflated with placeholder commands.
+CuteTerm includes **over 200 named command functions** in the cli/commands folder. You can also run **every real command exposed by your installed PowerShell and external tools**, including cmdlets, aliases, modules, applications, pipelines and interactive tools. On a typical Windows PowerShell 7 installation, this gives far more than 355 usable commands; the exact count varies by installed modules. Run **ct count** for the *actual live count*, and **ct commands -All** for the names. Counts are never inflated with placeholder commands.
 
-See [System commands](cli/commands/10-system.ps1), [Files commands](cli/commands/20-files.ps1), [Developer commands](cli/commands/30-developer.ps1) and [Utility commands](cli/commands/40-utility.ps1).
+See [System commands](cli/commands/10-system.ps1), [Files commands](cli/commands/20-files.ps1), [Developer commands](cli/commands/30-developer.ps1) and [Utility commands](cli/commands/40-utility.ps1), and [Project commands](cli/commands/50-projects.ps1).
 
 Some developer shortcuts need their real tools installed first: Git, Lua, Node, Python, .NET, etc.
 
