@@ -1,138 +1,126 @@
 # ✦ CuteTerm
 
-**A CLI-first PowerShell 7 environment for Windows 11.** Inspired by modern pastel terminal screenshots: original animated intro art, a custom Git-aware prompt, Arctic-style acrylic blur, modern tabs, split panes, five color themes, and your own installable command scripts.
+**Native Rust terminal workbench for Windows.** A Claude Code–style interactive command experience with the Arctic-glass visual direction from your reference: original pastel ASCII cat, animated startup, system sidebar, colored output, command palette, tabs, and custom commands.
 
-**No standalone GUI is required.** Windows Terminal provides the tabs, rendering, accessibility and blur. The shell remains a real, persistent PowerShell session rather than spawning one process per command. The old WinForms/WebView2 experiment is preserved in the repository but is not used by this CLI installer.
+CuteTerm is **not** a PowerShell wrapper and has **no PowerShell runtime requirement**. The application is written in Rust with Ratatui and Crossterm. Windows Terminal supplies the outer acrylic window and native window tabs.
 
-## Windows installer (recommended)
+## Windows download
 
-Download the latest `CuteTerm-Windows-Setup-<version>.exe` from **[GitHub Releases](https://github.com/taithedev/Cuteterm/releases/latest)**. The Windows-only installer registers CuteTerm as a Start menu application, installs the real PowerShell command packs, and configures an Arctic-blur Windows Terminal profile (when Windows Terminal is available). It installs for the current user, normally without administrator privileges.
+[Download the latest Windows release](https://github.com/taithedev/Cuteterm/releases/latest). Choose the `CuteTerm-Windows-Setup-0.5.0.exe` file for the Rust rewrite.
 
-**Requires PowerShell 7 or newer.** If it is not installed, first run `winget install --id Microsoft.PowerShell -e` from another shell. Windows Terminal is strongly recommended for tabs and blur. This is an unsigned installer; Windows SmartScreen may display a publisher warning. Only use assets downloaded from this repository's official Releases page.
+After installation, open **CuteTerm** from Start or type `cuteterm.exe` from its installation directory. A Windows Terminal profile named **CuteTerm** is also installed as a JSON fragment. Windows Terminal must be installed separately to obtain true acrylic blur.
 
-### Automatic updates
+Windows 10/11 x64 is required. The user-level installer does not require administrator rights. The executable and updater are native Rust; Python is only used to package releases in CI.
 
-CuteTerm checks [official GitHub Releases](https://github.com/taithedev/Cuteterm/releases) at startup, **at most once every 24 hours** by default. If a newer stable version is published, it downloads the official Windows CLI ZIP, checks the published SHA-256 manifest and the archive's version, and installs the update without closing your current tab. Open a new tab to load updated commands. Settings, local notes, bookmarks and `user-commands` remain untouched.
+## Run the Rust project from source
 
-    ct version
-    ct checkupdates
-    ct update
-    ct config set UpdateMode auto
-    ct config set UpdateMode notify
-    ct config set UpdateMode off
-    ct config set UpdateCheckHours 24
+Install the stable Rust toolchain, then:
 
-The update check requires internet access. In `notify` mode, CuteTerm only reports updates and waits for `ct update`; in `off` mode it does not check automatically. The updater does not silently elevate privileges. Auto-updates replace the CLI files, not the Windows Apps installer registry entry.
+```cmd
+git clone https://github.com/taithedev/Cuteterm.git
+cd Cuteterm
+cargo run --release
+```
 
-The Windows release assets and checksums are built from the [release workflow](.github/workflows/windows-release.yml) and [Inno Setup configuration](installer/CuteTerm.iss). The [manual CLI installer](install.ps1) remains available.
+To build native Windows executables:
 
-## Install from another CLI
+```cmd
+cargo build --release
+target\release\cuteterm.exe
+```
 
-In PowerShell 7:
+## How to use the interface
 
-    git clone https://github.com/taithedev/Cuteterm.git
-    cd Cuteterm
-    pwsh -File .\install.ps1
+Enter a real Windows command normally (like `dir`, `git status`, `cargo build`, `dotnet test`, or `lua -v`). CuteTerm runs it with the operating system's command processor and captures output in the active workspace. `cd`, `pwd`, `cls` and `clear` are supported natively.
 
-If PowerShell 7 is missing, install it with Windows Package Manager from your existing PowerShell console:
+Use slash commands for the interactive control layer:
 
-    winget install --id Microsoft.PowerShell -e
+```text
+/help
+/commands
+/find git
+/new
+/tabs
+/tab 2
+/rename backend
+/theme arctic
+/theme oled
+/animate off
+/system
+/cwd
+/cd C:\Projects
+/shell
+/shell cmd.exe
+/window
+/split
+/plugins
+/plugin new hello cmd.exe
+/plugin reload
+/update check
+/update install
+/update auto
+/update notify
+/update off
+/exit
+```
 
-Windows Terminal is recommended for the tabs and Arctic blur. Open Windows Terminal at least once so that its settings file exists.
+**Shortcuts:** Ctrl+T new workspace, Ctrl+W close, Alt+1–9 switch tabs, Up/Down command history, Tab slash completion, PageUp/PageDown output scroll, Ctrl+C cancel running process, Ctrl+Q quit.
 
-After installation, open a new CMD/PowerShell/Windows Terminal session and launch:
+Regular shell commands work inside each workspace. Commands that require a fully interactive terminal (such as TUIs and REPLs) should use `/shell`, which temporarily hands the real console to `cmd.exe` or another shell, then returns to CuteTerm. An embedded ConPTY emulator is not part of v0.5.0.
 
-    cuteterm
+## Custom commands
 
-Alternatively select the **CuteTerm** profile from the Windows Terminal tab menu. The CuteTerm CLI installer writes to your user profile and does not need administrator privileges; dependency installation may have different requirements.
+The repository's `commands/` folder includes examples for Git, Cargo, .NET, Lua and CMD. Your private extensions live in `%LOCALAPPDATA%\CuteTerm\commands`.
 
-Use one-shot commands from another shell:
+Custom extensions use JSON manifests so you can add commands without compiling Rust:
 
-    cuteterm help
-    cuteterm count
-    cuteterm theme list
+```json
+{
+  "name": "git-status",
+  "description": "Show current Git status",
+  "program": "git.exe",
+  "args": ["status", "--short", "--branch"]
+}
+```
 
-## Real commands
+Save as `%LOCALAPPDATA%\CuteTerm\commands\git-status.json`, run `/plugin reload`, then `/git-status`. Commands run with your existing Windows user permissions. Only install custom command manifests from sources you trust.
 
-Inside CuteTerm:
+**Command counts are real.** `/commands` distinguishes implemented CuteTerm actions, custom commands and executables actually found on your PATH. This release does not pretend that 355 separately implemented Rust commands exist. Windows, Git, Rust, Node, Python, C# tools, and other programs can be used when they are installed.
 
-    ct help
-    ct commands
-    ct commands -All
-    ct count
-    ct find git
-    ct doctor
+## Themes, tabs and Arctic blur
 
-    ct sys
-    ct cpu
-    ct memory
-    ct disks
-    ct wifi
-    ct ports
-    ct ls
-    ct findfiles *.cs
-    ct grep 'TODO' .\Program.cs
-    ct hash .\Program.cs
+Five themes are included: **Arctic, Blossom, Midnight, Mint, OLED**. Type `/theme arctic` to choose Arctic.
 
-    ct gstatus
-    ct glog
-    ct dotnet --info
-    ct lua -v
-    ct node --version
+The Windows installer adds `terminal/CuteTerm.json` to your per-user Windows Terminal **Fragments** directory. It contributes a modern pastel profile with real Windows Terminal acrylic blur, saved opacity and colors without modifying your other profiles. Your personal settings in `%LOCALAPPDATA%\CuteTerm` survive updates.
 
-    ct note new ideas "My first note"
-    ct todo add finish CuteTerm
-    ct bookmark add project
-    ct bookmark go project
+In-app tabs are independent Rust workspaces with separate working directories and process logs. The `/window` and `/split` commands request real Windows Terminal tabs and split panes.
 
-    ct theme list
-    ct theme set arctic
-    ct config set Opacity 78
-    ct config set Animation full
-    ct tab
-    ct split
+## Verified auto-updates
 
-CuteTerm includes **over 200 named command functions** in the cli/commands folder. You can also run **every real command exposed by your installed PowerShell and external tools**, including cmdlets, aliases, modules, applications, pipelines and interactive tools. On a typical Windows PowerShell 7 installation, this gives far more than 355 usable commands; the exact count varies by installed modules. Run **ct count** for the *actual live count*, and **ct commands -All** for the names. Counts are never inflated with placeholder commands.
+CuteTerm checks [official GitHub Releases](https://github.com/taithedev/Cuteterm/releases) at startup up to once per 24 hours. If the release contains a newer `CuteTerm-Windows-x64.zip` with a matching GitHub SHA-256 digest, it launches the separate `cuteterm-updater.exe` and exits before the executable is replaced. An invalid checksum aborts the update.
 
-See [System commands](cli/commands/10-system.ps1), [Files commands](cli/commands/20-files.ps1), [Developer commands](cli/commands/30-developer.ps1) and [Utility commands](cli/commands/40-utility.ps1), and [Project commands](cli/commands/50-projects.ps1).
+You control the behavior with `/update auto`, `/update notify` or `/update off`. Custom commands and settings are stored outside the program folder, so updates preserve them. Automatic updates require network access and write permissions to the per-user install folder.
 
-Some developer shortcuts need their real tools installed first: Git, Lua, Node, Python, .NET, etc.
+Windows installer assets are currently unsigned. Only download from the official GitHub Releases page.
 
-## Your custom commands
+## Repository layout
 
-    ct command new hello
-    ct command path
-    ct command reload
-    ct hello
+```text
+src/
+  main.rs                Rust CLI entrypoint
+  app.rs                 Ratatui workspace UI + keyboard controls
+  commands.rs            Process execution and command packs
+  theme.rs               Pastel palettes
+  config.rs              User config and history paths
+  update.rs              Verified GitHub release auto-updates
+  bin/cuteterm-updater.rs Separate Windows update helper
+commands/                 Built-in JSON command examples
+terminal/CuteTerm.json    Windows Terminal acrylic fragment
+installer/CuteTerm.iss    Native Windows EXE installer
+installer/package.py      Build-time packaging (not runtime)
+.github/workflows/        Rust Windows build, smoke tests and release
+```
 
-Editable PowerShell scripts live in the user-commands folder below your local AppData CuteTerm installation. Reinstalling does not overwrite this folder. Each script can declare its own ct-prefixed functions and command descriptions. See [Custom Commands Guide](cli/docs/CUSTOM-COMMANDS.md) and [example command](cli/examples/hello.ps1).
+Note: the repo's Git history contains a previous PowerShell/C# prototype. v0.5.0 replaces that architecture with the Rust executable.
 
-**Security:** Custom scripts run with your current Windows account permissions. Use scripts you wrote or reviewed. CuteTerm never automatically elevates, disables execution policies, or downloads and executes remote scripts during startup.
-
-## Arctic blur and themes
-
-Five built-in palettes: **Arctic, Blossom, Midnight, Mint and OLED**. The Windows Terminal profile uses official useAcrylic and opacity settings rather than attempting to fake blur in a text-only process. On installation CuteTerm backs up Windows Terminal settings before patching them. Existing JSONC comments can be lost when the file is reformatted; the original is preserved in the timestamped backup. A damaged settings file is not overwritten.
-
-Windows may disable acrylic during remote sessions, battery saving, or unsupported GPU/composition conditions. The screenshot is an art-direction reference, not a pixel-identical rendering.
-
-## Update / uninstall
-
-    ct update
-    ct uninstall
-
-Update uses the recorded Git checkout, does a fast-forward-only pull, then reinstalls the CLI. You can also rerun install.ps1 manually. Uninstall backs up your user-created commands and removes the CuteTerm CLI Windows Terminal profile and PATH entry. It does not attempt to reset unrelated global Terminal preferences.
-
-## Quality and known limitations
-
-- Target: Windows 11 and PowerShell 7. Windows Terminal is optional for the shell itself but required for integrated tabs and acrylic.
-- The intro animations are CLI-based, not GPU animations.
-- Live command count depends on your actual PowerShell installation.
-- Custom commands are local .ps1 scripts, with no sandbox.
-- A Windows PowerShell parsing and command smoke-test workflow is included. Passing it cannot guarantee every optional CLI tool works on every user's machine.
-- The older GUI source is preserved for reference; the CLI installer does not use or compile it.
-
-Run the tests from the repo root:
-
-    pwsh -File .\cli\tests\Smoke.ps1
-
-[Repository and issues](https://github.com/taithedev/Cuteterm)
+**Project:** [taithedev/Cuteterm](https://github.com/taithedev/Cuteterm) · [Windows downloads](https://github.com/taithedev/Cuteterm/releases/latest)
