@@ -97,7 +97,8 @@ begin
   if CurUninstallStep = usPostUninstall then begin
     AppPath := ExpandConstant('{app}');
     if RegQueryStringValue(HKCU, 'Environment', 'Path', OldPath) then begin
-      UpdatedPath := StringChangeEx(';' + OldPath + ';', ';' + AppPath + ';', ';', True);
+      UpdatedPath := ';' + OldPath + ';';
+      StringChangeEx(UpdatedPath, ';' + AppPath + ';', ';', True);
       if (Length(UpdatedPath) >= 2) and (UpdatedPath[1] = ';') then
         Delete(UpdatedPath, 1, 1);
       if (Length(UpdatedPath) >= 1) and (UpdatedPath[Length(UpdatedPath)] = ';') then
