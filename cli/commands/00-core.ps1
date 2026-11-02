@@ -17,7 +17,9 @@ function ct-help {
     Write-Host '  ct tab                New Windows Terminal tab'
     Write-Host '  ct split              Split the current terminal pane'
     Write-Host '  ct welcome            Replay the animated welcome'
-    Write-Host '  ct update             Update from your Git checkout'
+    Write-Host '  ct update             Install latest verified GitHub release'
+    Write-Host '  ct checkupdates       Check for a new Windows release'
+    Write-Host '  ct config set UpdateMode auto|notify|off'
     Write-Host '  ct uninstall          Remove the CLI installation'
     Write-Host ''
     Write-CuteTerm '  Try Get-Help Get-ChildItem -Examples for native PowerShell.' 'cyan'
@@ -62,7 +64,7 @@ function ct-find {
 Register-CuteTermCommand 'ct-find' 'core' 'Search commands, categories, and descriptions.'
 
 function ct-version {
-    Write-CuteTerm '  CuteTerm CLI 0.3.0  •  PowerShell-native' 'pink'
+    Write-CuteTerm ("  CuteTerm CLI {0}  •  PowerShell-native" -f (Get-CuteTermCurrentVersion)) 'pink'
     Write-Host ("  PowerShell {0}; {1}" -f $PSVersionTable.PSVersion,[System.Runtime.InteropServices.RuntimeInformation]::OSDescription)
 }
 Register-CuteTermCommand 'ct-version' 'core' 'Display CuteTerm and PowerShell versions.'
@@ -87,8 +89,8 @@ function ct-config {
     param([string]$Action='list',[string]$Key,[string]$Value)
     $cfg=Get-CuteTermConfig
     if ($Action -eq 'list') { $cfg.GetEnumerator() | Sort-Object Name | Format-Table Name,Value -AutoSize; return }
-    if ($Action -ne 'set' -or -not $Key) { Write-Host 'Usage: ct config set <Startup|Animation|GitPrompt|Opacity> <value>'; return }
-    $allowed=@('Startup','Animation','GitPrompt','Opacity')
+    if ($Action -ne 'set' -or -not $Key) { Write-Host 'Usage: ct config set <Startup|Animation|GitPrompt|Opacity|UpdateMode|UpdateCheckHours> <value>'; return }
+    $allowed=@('Startup','Animation','GitPrompt','Opacity','UpdateMode','UpdateCheckHours')
     $proper = @($allowed | Where-Object { $_ -ieq $Key })
     if ($proper.Count -ne 1) { Write-Warning ("Allowed: " + ($allowed -join ', ')); return }
     $Key = $proper[0]
@@ -99,6 +101,13 @@ function ct-config {
         $number = 0
         if (-not [int]::TryParse($Value,[ref]$number) -or $number -lt 40 -or $number -gt 100) { Write-Warning 'Opacity must be 40..100.'; return }
         $cfg[$Key] = $number
+    } elseif ($Key -eq 'UpdateMode') {
+        if ($Value -notin @('auto','notify','off')) { Write-Warning 'UpdateMode: auto, notify or off.'; return }
+        $cfg[$Key]=$Value
+    } elseif ($Key -eq 'UpdateCheckHours') {
+        $number=0
+        if (-not [int]::TryParse($Value,[ref]$number) -or $number -lt 1 -or $number -gt 168) { Write-Warning 'UpdateCheckHours must be 1..168.'; return }
+        $cfg[$Key]=$number
     } else {
         if ($Value -notin @('off','soft','full')) { Write-Warning 'Animation: off, soft, full.'; return }
         $cfg[$Key]=$Value
@@ -208,16 +217,33 @@ function ct-profile {
 Register-CuteTermCommand 'ct-profile' 'core' 'Locate configuration, extension scripts and PowerShell profile.'
 
 function ct-update {
-    $install=Get-CuteTermConfig
-    if (-not $install.Source -or -not (Test-Path -LiteralPath (Join-Path $install.Source '.git'))) {
-        Write-Warning 'Cannot update automatically without the original Git checkout. Clone the repository and run install.ps1 again.'
+    if (-not (Get-Command Invoke-CuteTermUpdate -ErrorAction Ignore)) {
+        Write-Warning 'Release updater not installed. Reinstall CuteTerm.'
         return
     }
-    & git -C $install.Source pull --ff-only
-    if ($LASTEXITCODE -ne 0) { Write-Warning 'Git update failed; existing installation preserved.'; return }
-    & pwsh -NoProfile -File (Join-Path $install.Source 'install.ps1')
+    [void](Invoke-CuteTermUpdate)
 }
-Register-CuteTermCommand 'ct-update' 'core' 'Update CuteTerm from the recorded Git checkout (fast-forward only).'
+Register-CuteTermCommand 'ct-update' 'core' 'Install a verified newer release from GitHub.'
+
+function ct-checkupdates {
+    param([switch]$Auto)
+    if (-not (Get-Command Get-CuteTermRelease -ErrorAction Ignore)) {
+        Write-Warning 'Release updater not installed.'
+        return
+    }
+    if ($Auto) { Test-CuteTermUpdatesAtStartup; return }
+    try {
+        $latest=Get-CuteTermRelease
+        $current=Get-CuteTermCurrentVersion
+        $target=[version]($latest.tag_name.Substring(1))
+        if ($target -gt $current) {
+            Write-CuteTerm ("  New CuteTerm release available: {0} (installed {1}). Run 'ct update'." -f $target,$current) 'yellow'
+        } else {
+            Write-CuteTerm ("  CuteTerm {0} is up to date." -f $current) 'green'
+        }
+    } catch { Write-Warning "Could not check releases: $_" }
+}
+Register-CuteTermCommand 'ct-checkupdates' 'core' 'Check current release and automatic update availability.'
 
 function ct-uninstall {
     $scriptPath=Join-Path $script:Root 'uninstall.ps1'
