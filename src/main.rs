@@ -10,50 +10,75 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().skip(1).collect();
-    let settings = config::load();
-
+    let mut settings = config::load();
     match args.first().map(String::as_str) {
         Some("--version" | "-V" | "version") => {
-            println!("CuteTerm v{} / Rust-native Windows CLI", env!("CARGO_PKG_VERSION"));
+            println!("CuteTerm {} / Rust + ConPTY / Windows", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Some("--help" | "-h" | "help") => {
-            println!("CuteTerm v{} — a softer side of the command line", env!("CARGO_PKG_VERSION"));
-            println!("Run cuteterm without arguments for the interactive workspace.");
-            println!("  cuteterm commands        list real commands");
-            println!("  cuteterm --check-update  check GitHub Releases");
-            println!("  cuteterm --update        verify and install the newest release");
-            println!("  cuteterm --version       show version");
-            println!("Inside the app, type /help for shortcuts.");
+            println!("✦ CuteTerm {} — Windows-native interactive terminal", env!("CARGO_PKG_VERSION"));
+            println!("Usage: cuteterm [command]");
+            println!("  cuteterm                 start native ConPTY terminal");
+            println!("  cuteterm shell [program] launch a terminal with cmd.exe, pwsh.exe, wsl.exe, etc.");
+            println!("  cuteterm commands        show CuteTerm commands and real PATH command count");
+            println!("  cuteterm doctor          check system and terminal compatibility");
+            println!("  cuteterm themes          list palettes");
+            println!("  cuteterm update          verify and install a newer release");
+            println!("  cuteterm check-updates   check GitHub Releases without installing");
+            println!("  cuteterm version         show version information");
+            println!();
+            println!("Within the interactive CLI: Ctrl+G opens the CuteTerm command palette.");
+            println!("Ctrl+T opens a shell tab. Ctrl+W closes a tab. Alt+1..9 switches tabs.");
+            println!("All other keyboard input goes straight into your persistent Windows shell.");
             return Ok(());
         }
         Some("commands") => {
-            println!("CuteTerm actions ({}):", commands::BUILTINS.len());
+            println!("CuteTerm control palette ({} commands):", commands::BUILTINS.len());
             for (name, description) in commands::BUILTINS {
                 println!("  {name:<26} {description}");
             }
-            let (user_commands, warnings) = commands::load_custom_commands(&config::commands_dir());
-            println!("\nUser and bundled commands ({}):", user_commands.len());
-            for item in user_commands.values() { println!("  /{:<25} {}", item.name, item.description); }
+            let (custom, warnings) = commands::load_custom_commands(&config::commands_dir());
+            println!("\nCustom command manifests ({}):", custom.len());
+            for item in custom.values() { println!("  {:<26} {}", item.name, item.description); }
             for warning in warnings { eprintln!("{warning}"); }
-            let found = commands::available_executables();
-            println!("\nExecutable commands discovered in PATH: {}", found.len());
+            println!("\nReal Windows PATH executables: {}", commands::available_executables().len());
             return Ok(());
         }
-        Some("--check-update") => {
-            println!("{}", update::check_for_updates(false, &settings)?);
+        Some("doctor") => {
+            println!("CuteTerm compatibility report");
+            println!("  platform          {}",std::env::consts::OS);
+            println!("  architecture      {}",std::env::consts::ARCH);
+            println!("  ConPTY            {}", if cfg!(windows) { "Windows 10 1809+ required" } else {"unsupported on this platform"});
+            println!("  default shell     {}",settings.default_shell);
+            println!("  terminal profile  Windows Terminal optional (for acrylic/tab chrome)");
+            println!("  command manifests {}",config::commands_dir().display());
+            println!("  installed tools   {}",commands::available_executables().len());
+            println!("  update mode       {}",settings.update_mode);
+            let shell = std::process::Command::new("where.exe").arg(&settings.default_shell).output();
+            match shell {
+                Ok(result) if result.status.success() => println!("  shell available   yes"),
+                _ => println!("  shell available   NO — use 'cuteterm shell cmd.exe'"),
+            }
             return Ok(());
         }
-        Some("--update") => {
-            println!("{}", update::check_for_updates(true, &settings)?);
+        Some("themes" | "--themes") => {
+            println!("CuteTerm themes: {}", theme::THEMES.join(" | "));
             return Ok(());
         }
-        Some("--themes") => {
-            println!("CuteTerm themes: {}", theme::THEMES.join(", "));
+        Some("check-updates" | "--check-update") => {
+            println!("{}",update::check_for_updates(false,&settings)?);
             return Ok(());
+        }
+        Some("update" | "--update") => {
+            println!("{}",update::check_for_updates(true,&settings)?);
+            return Ok(());
+        }
+        Some("shell" | "--shell") => {
+            if let Some(shell) = args.get(1) {settings.default_shell = shell.clone();}
         }
         Some(other) => {
-            return Err(format!("Unknown CLI option {other}. Try cuteterm --help").into());
+            return Err(format!("Unknown CuteTerm command '{other}'. Run 'cuteterm help'.").into());
         }
         None => {}
     }
