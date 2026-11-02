@@ -1,26 +1,18 @@
-# CuteTerm 0.5.0 — Rust-native Windows terminal workbench
+# CuteTerm v0.6.0 — Full Windows ConPTY CLI
 
-This release replaces the PowerShell-first CuteTerm CLI with a standalone **Rust executable**.
+CuteTerm now uses persistent Windows pseudo-terminal (ConPTY) sessions inside its native Rust TUI. Windows commands run in a real interactive shell, not a new child shell for every line.
 
-## New in 0.5.0
+Changes:
+- Independent shell tabs with Ctrl+T, Ctrl+W, Alt+1–9.
+- Default CMD shell; use the Ctrl+G command palette to launch optional PowerShell, WSL or other installed shells.
+- ANSI/VT100 colors, interactive keyboard input, resizing, cursor movement, 2,500-line scrollback, bracketed paste and native command state.
+- Pastel Arctic, OLED, Blossom, Mint and Midnight themes, moving artwork, real system information and terminal status.
+- Ctrl+G command palette with themes, tabs, plugin manifests, Windows Terminal tabs/panes and update controls.
+- Windows x64 per-user installer; adds CLI directory to user PATH and optional Explorer "Open CuteTerm Here".
+- Signed-digest (SHA-256) release ZIP updater; settings and custom scripts remain in LocalAppData.
 
-- Polished Claude Code-inspired terminal workbench: animated startup, original ASCII cat, system sidebar, custom-colored output and input panel.
-- Rust / Ratatui / Crossterm implementation: no PowerShell runtime dependency.
-- Real native Windows command execution with process output and cancellation.
-- Multiple independent in-app workspaces: Ctrl+T, Ctrl+W, Alt+1–9, history and custom working directories.
-- A command palette with slash commands such as `/help`, `/commands`, `/theme`, `/system`, `/shell`, `/plugin` and `/update`.
-- Five built-in themes: Arctic, Blossom, Midnight, Mint and OLED.
-- Optional full interactive cmd.exe shell via `/shell`; Windows Terminal remains responsible for genuine native window tabs and acrylic blur.
-- User-created JSON command manifests kept in `%LOCALAPPDATA%\CuteTerm\commands` and bundled example commands.
-- Automatic update checks against official GitHub Releases, with GitHub asset SHA-256 verification and standalone updater executable. Use `/update auto`, `/update notify`, `/update off`.
-- Windows x64 per-user EXE installer, Windows Terminal JSON fragment, and standalone ZIP updates.
+Run cuteterm help from CMD or press Ctrl+G inside CuteTerm, type help, and press Enter.
 
-## Requirements
+Requirements: Windows 10 1809+ or Windows 11 x64. Windows Terminal is optional for Arctic acrylic blur; PowerShell is not required. The installer is currently unsigned.
 
-Windows 10/11 x64. Windows Terminal is recommended for Arctic acrylic blur; the application itself is a CLI/TUI executable. PowerShell and Python are not runtime requirements. No admin privileges are normally needed for a per-user installation.
-
-## Notes
-
-The in-app output panel captures ordinary subprocess output. Programs requiring a full interactive console should be run via `/shell`. This release does not claim fully embedded ConPTY sessions, split real PTYs, an AI model backend or 355 independently implemented native Rust commands. The `/commands` output distinguishes built-in actions, custom command manifests, and actual installed tools.
-
-Code signing is not yet configured; Windows may identify the installer as an unsigned publisher.
+This is an actively developed terminal emulator; not every advanced full-screen application or custom Windows console behavior is guaranteed to work perfectly.
