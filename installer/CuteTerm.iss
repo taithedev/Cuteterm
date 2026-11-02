@@ -48,7 +48,7 @@ Source: "..\cli\docs\*"; DestDir: "{app}\cli\docs"; Flags: ignoreversion recurse
 Source: "..\cli\examples\*"; DestDir: "{app}\cli\examples"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{userprograms}\CuteTerm"; Filename: "{localappdata}\CuteTerm\bin\cuteterm.cmd"; WorkingDir: "{userprofile}"; Comment: "CuteTerm PowerShell CLI"
+Name: "{userprograms}\CuteTerm"; Filename: "{localappdata}\CuteTerm\bin\cuteterm.cmd"; WorkingDir: "{localappdata}"; Comment: "CuteTerm PowerShell CLI"
 
 [Run]
 Filename: "pwsh.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -File ""{app}\install.ps1"""; WorkingDir: "{app}"; StatusMsg: "Configuring CuteTerm CLI and Windows Terminal..."; Flags: runhidden waituntilterminated
