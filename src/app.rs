@@ -146,9 +146,11 @@ impl App {
         match name.as_str() {
             "help" | "?" => self.help = !self.help,
             "about" => self.log(format!("CuteTerm {} • native Rust • ConPTY • Windows", env!("CARGO_PKG_VERSION"))),
-            "new" | "tabnew" => self.spawn_tab(
-                if arg(1).is_empty() { &self.settings.default_shell.clone() } else { arg(1) },
-                width, height),
+            "new" | "tabnew" => {
+                let shell = if arg(1).is_empty() { self.settings.default_shell.clone() }
+                            else { arg(1).to_owned() };
+                self.spawn_tab(&shell, width, height);
+            },
             "tabs" => {
                 let names = self.tabs.iter().enumerate().map(|(i,t)| format!("{}:{} ({})",i+1,t.title,t.session.shell)).collect::<Vec<_>>();
                 self.log(names.join(" · "));
