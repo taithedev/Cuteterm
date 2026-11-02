@@ -67,7 +67,12 @@ function Invoke-CuteTermUpdate {
         $actual=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($expected -ne $actual) { throw 'Downloaded release failed SHA-256 verification.' }
         $digestProperty=$zipAsset[0].PSObject.Properties['digest']
-        if ($digestProperty -and $digestProperty.Value -and $digestProperty.Value -match '^sha256:([a-fA-F0-9]{64})
+        if ($digestProperty -and $digestProperty.Value) {
+            $githubDigest=[string]$digestProperty.Value
+            if (-not $githubDigest.StartsWith('sha256:',[StringComparison]::OrdinalIgnoreCase)) { throw 'GitHub asset digest uses an unsupported algorithm.' }
+            $githubHash=$githubDigest.Substring(7).ToLowerInvariant()
+            if ($githubHash.Length -ne 64 -or $actual -ne $githubHash) { throw 'GitHub asset checksum mismatch.' }
+        }
         $extract=Join-Path $temp 'payload'
         Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force -ErrorAction Stop
         $install=Join-Path $extract 'install.ps1'
