@@ -14,7 +14,7 @@ function Get-CuteTermConfig {
         try { return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -AsHashtable -ErrorAction Stop) }
         catch { Write-Warning "CuteTerm config is invalid: $_" }
     }
-    return @{ Theme = 'arctic'; Animation = 'soft'; Startup = $true; GitPrompt = $true; Opacity = 82 }
+    return @{ Theme = 'arctic'; Animation = 'soft'; Startup = $true; GitPrompt = $true; Opacity = 82; UpdateMode = 'auto'; UpdateCheckHours = 24; Version = '0.4.0' }
 }
 function Set-CuteTermConfig {
     param([System.Collections.IDictionary]$Config)
@@ -141,6 +141,8 @@ function ct {
 }
 $helper = Join-Path $script:Root 'lib/TerminalProfile.ps1'
 if (Test-Path -LiteralPath $helper) { . $helper }
+$updater = Join-Path $script:Root 'updater/ReleaseUpdater.ps1'
+if (Test-Path -LiteralPath $updater) { . $updater }
 $builtinDir = Join-Path $script:Root 'commands'
 $userDir = Join-Path $script:Root 'user-commands'
 if (Test-Path -LiteralPath $builtinDir) {
