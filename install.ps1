@@ -10,29 +10,30 @@ if (-not (Test-Path -LiteralPath (Join-Path $source 'cli/module/CuteTerm.psm1'))
 }
 $homeDir=Join-Path $env:LOCALAPPDATA 'CuteTerm'
 [void](New-Item -Path $homeDir -ItemType Directory -Force)
-foreach ($dir in @('commands','module','lib','themes')) {
+foreach ($dir in @('commands','module','lib','themes','updater')) {
     $destination=Join-Path $homeDir $dir
     if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Recurse -Force }
     [void](New-Item -Path $destination -ItemType Directory -Force)
     Copy-Item -Path (Join-Path (Join-Path $source 'cli') "$dir/*") -Destination $destination -Recurse -Force
 }
-foreach ($file in @('start.ps1','cli.ps1')) {
+foreach ($file in @('start.ps1','cli.ps1','version.txt')) {
     Copy-Item -LiteralPath (Join-Path $source "cli/$file") -Destination (Join-Path $homeDir $file) -Force
 }
 Copy-Item -LiteralPath (Join-Path $source 'uninstall.ps1') -Destination (Join-Path $homeDir 'uninstall.ps1') -Force
 [void](New-Item -Path (Join-Path $homeDir 'user-commands') -ItemType Directory -Force)
 
 $configPath=Join-Path $homeDir 'config.json'
-$cfg = @{ Theme='arctic'; Animation='soft'; Startup=$true; GitPrompt=$true; Opacity=82 }
+$cfg = @{ Theme='arctic'; Animation='soft'; Startup=$true; GitPrompt=$true; Opacity=82; UpdateMode='auto'; UpdateCheckHours=24 }
 if (Test-Path -LiteralPath $configPath) {
     try {
         $previous=Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
-        foreach ($key in @('Theme','Animation','Startup','GitPrompt','Opacity')) {
+        foreach ($key in @('Theme','Animation','Startup','GitPrompt','Opacity','UpdateMode','UpdateCheckHours')) {
             if ($previous.Contains($key)) { $cfg[$key]=$previous[$key] }
         }
     } catch { Write-Warning 'Old config could not be read; applying defaults.' }
 }
 $cfg['Source']=$source
+$cfg['Version']=(Get-Content -LiteralPath (Join-Path $homeDir 'version.txt') -Raw -ErrorAction Stop).Trim()
 $cfg | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $configPath -Encoding utf8
 
 $binDir=Join-Path $homeDir 'bin'
