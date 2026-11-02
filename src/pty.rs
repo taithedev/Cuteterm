@@ -24,12 +24,17 @@ pub struct ShellSession {
 
 impl ShellSession {
     pub fn spawn(shell: &str, cwd: &Path, rows: u16, cols: u16) -> io::Result<Self> {
+        Self::spawn_argv(shell, &[], cwd, rows, cols)
+    }
+
+    pub fn spawn_argv(shell: &str, args: &[String], cwd: &Path, rows: u16, cols: u16) -> io::Result<Self> {
         let rows = rows.max(2);
         let cols = cols.max(10);
         let pair = native_pty_system()
             .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
             .map_err(io::Error::other)?;
         let mut cmd = CommandBuilder::new(shell);
+        cmd.args(args.iter());
         cmd.cwd(cwd.as_os_str());
         let child = pair.slave.spawn_command(cmd).map_err(io::Error::other)?;
         drop(pair.slave);
