@@ -1,28 +1,26 @@
-# CuteTerm 0.4.0 — Windows installer and automatic updates
+# CuteTerm 0.5.0 — Rust-native Windows terminal workbench
 
-First Windows-only installer release of CuteTerm's CLI edition.
+This release replaces the PowerShell-first CuteTerm CLI with a standalone **Rust executable**.
 
-- Windows setup executable that installs the CuteTerm PowerShell 7 CLI per user.
-- Windows Terminal profile with Arctic acrylic blur, tabs, split panes and color themes.
-- More than 200 CuteTerm commands and native PowerShell command support.
-- Original animated startup and system-information display.
-- Verified automatic updates from this repository's official GitHub Releases.
-- SHA-256 checked Windows CLI update packages.
-- `ct update` and `ct checkupdates` for manual checks.
-- Update settings: `ct config set UpdateMode auto|notify|off`.
-- Per-user custom commands, preferences and notes survive updates.
-- Clean uninstall with user-command backup.
+## New in 0.5.0
+
+- Polished Claude Code-inspired terminal workbench: animated startup, original ASCII cat, system sidebar, custom-colored output and input panel.
+- Rust / Ratatui / Crossterm implementation: no PowerShell runtime dependency.
+- Real native Windows command execution with process output and cancellation.
+- Multiple independent in-app workspaces: Ctrl+T, Ctrl+W, Alt+1–9, history and custom working directories.
+- A command palette with slash commands such as `/help`, `/commands`, `/theme`, `/system`, `/shell`, `/plugin` and `/update`.
+- Five built-in themes: Arctic, Blossom, Midnight, Mint and OLED.
+- Optional full interactive cmd.exe shell via `/shell`; Windows Terminal remains responsible for genuine native window tabs and acrylic blur.
+- User-created JSON command manifests kept in `%LOCALAPPDATA%\CuteTerm\commands` and bundled example commands.
+- Automatic update checks against official GitHub Releases, with GitHub asset SHA-256 verification and standalone updater executable. Use `/update auto`, `/update notify`, `/update off`.
+- Windows x64 per-user EXE installer, Windows Terminal JSON fragment, and standalone ZIP updates.
 
 ## Requirements
 
-Windows 10/11 and PowerShell 7+. Windows Terminal is recommended for Arctic blur and tabs. PowerShell 7 can be installed via:
+Windows 10/11 x64. Windows Terminal is recommended for Arctic acrylic blur; the application itself is a CLI/TUI executable. PowerShell and Python are not runtime requirements. No admin privileges are normally needed for a per-user installation.
 
-```powershell
-winget install --id Microsoft.PowerShell -e
-```
+## Notes
 
-Download `CuteTerm-Windows-Setup-0.4.0.exe`, run the installer, then launch CuteTerm from your Start menu or enter `cuteterm` in a newly opened terminal.
+The in-app output panel captures ordinary subprocess output. Programs requiring a full interactive console should be run via `/shell`. This release does not claim fully embedded ConPTY sessions, split real PTYs, an AI model backend or 355 independently implemented native Rust commands. The `/commands` output distinguishes built-in actions, custom command manifests, and actual installed tools.
 
-The installer is currently **unsigned** and may display a Windows SmartScreen warning. Only download from this project's official GitHub Releases page; never bypass warnings for downloads from unknown publishers.
-
-Auto-updating uses the packaged CLI ZIP rather than reinstalling the Windows Apps entry each time. New terminal tabs pick up updated commands; your existing running PowerShell sessions are not force-closed.
+Code signing is not yet configured; Windows may identify the installer as an unsigned publisher.
