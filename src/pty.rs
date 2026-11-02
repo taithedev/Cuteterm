@@ -138,7 +138,11 @@ mod tests {
         let cwd = std::env::current_dir().expect("cwd");
         let mut session = super::ShellSession::spawn("cmd.exe", &cwd, 20, 100)
             .expect("ConPTY should start on a supported Windows runner");
+        std::thread::sleep(Duration::from_millis(250));
+        session.poll();
         session.send_command("set CUTETERM_TEST_VAR=conpty_").expect("set variable");
+        std::thread::sleep(Duration::from_millis(120));
+        session.poll();
         session.send_command("echo %CUTETERM_TEST_VAR%works").expect("echo saved variable");
         let start = Instant::now();
         let mut seen = false;
@@ -150,8 +154,10 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(30));
         }
+        let captured = session.parser.screen().contents();
+        let alive = session.alive;
         session.stop();
-        assert!(seen, "Real cmd.exe must persist shell variables across commands inside ConPTY");
+        assert!(seen, "Real CMD ConPTY test failed (alive={alive}). Captured screen: {captured:?}");
     }
 
 }
