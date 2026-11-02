@@ -1,12 +1,12 @@
 # CuteTerm — Rust native Windows ConPTY terminal
 
-CuteTerm v0.6.0 is a native Rust CLI/TUI with a Claude Code-style control palette and the pastel Arctic look from the project reference. It is NOT a PowerShell wrapper. Each internal tab runs its own real, persistent Windows ConPTY session.
+CuteTerm v0.6.1 is a native Rust CLI/TUI with a Claude Code-style control palette and the pastel Arctic look from the project reference. It is NOT a PowerShell wrapper. Each internal tab runs its own real, persistent Windows ConPTY session.
 
 ## Windows download and installation
 
 Use the latest official release: https://github.com/taithedev/Cuteterm/releases/latest
 
-Choose CuteTerm-Windows-Setup-0.6.0.exe for the Windows x64 installer. It creates Start menu entries, adds the native executable to your user PATH, and optionally adds an "Open CuteTerm Here" entry to File Explorer. Launch in a new CMD or Windows Terminal window using:
+Choose CuteTerm-Windows-Setup-0.6.1.exe for the Windows x64 installer. It creates Start menu entries, adds the native executable to your user PATH, and optionally adds an "Open CuteTerm Here" entry to File Explorer. Launch in a new CMD or Windows Terminal window using:
 
     cuteterm
 

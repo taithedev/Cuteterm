@@ -1,4 +1,4 @@
-# CuteTerm v0.6.0 — Full Windows ConPTY CLI
+# CuteTerm v0.6.1 — Full Windows ConPTY CLI
 
 CuteTerm now uses persistent Windows pseudo-terminal (ConPTY) sessions inside its native Rust TUI. Windows commands run in a real interactive shell, not a new child shell for every line.
 

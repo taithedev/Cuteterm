@@ -1,6 +1,6 @@
 ; CuteTerm — native Rust CLI, Windows x64, per-user installer. No PowerShell required.
 #define MyAppName "CuteTerm"
-#define MyAppVersion "0.6.0"
+#define MyAppVersion "0.6.1"
 #define MyAppPublisher "taithedev"
 #define MyAppURL "https://github.com/taithedev/Cuteterm"
 
