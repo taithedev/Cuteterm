@@ -46,6 +46,16 @@ Source: "..\target\release\cuteterm-updater.exe"; DestDir: "{app}"; Flags: ignor
 Source: "..\commands\*.json"; DestDir: "{app}\commands"; Flags: ignoreversion
 Source: "..\terminal\CuteTerm.json"; DestDir: "{localappdata}\Microsoft\Windows Terminal\Fragments\CuteTerm"; Flags: ignoreversion
 
+
+[Tasks]
+Name: "explorer"; Description: "Add Open CuteTerm Here to File Explorer"; Flags: unchecked
+
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\CuteTerm"; ValueType: string; ValueData: "Open CuteTerm Here"; Tasks: explorer; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\Background\shell\CuteTerm\command"; ValueType: string; ValueData: """{app}\cuteterm.exe"" --cwd ""%V"""; Tasks: explorer; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\CuteTerm"; ValueType: string; ValueData: "Open CuteTerm Here"; Tasks: explorer; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Directory\shell\CuteTerm\command"; ValueType: string; ValueData: """{app}\cuteterm.exe"" --cwd ""%1"""; Tasks: explorer; Flags: uninsdeletekey
+
 [Icons]
 Name: "{userprograms}\CuteTerm"; Filename: "{app}\cuteterm.exe"; WorkingDir: "{localappdata}"; Comment: "Native Rust terminal workbench"
 Name: "{userprograms}\CuteTerm - Command List"; Filename: "{app}\cuteterm.exe"; Parameters: "commands"; WorkingDir: "{localappdata}"; Comment: "Show real installed commands"
@@ -57,7 +67,43 @@ Filename: "{app}\cuteterm.exe"; Description: "Launch CuteTerm"; Flags: postinsta
 Type: files; Name: "{localappdata}\Microsoft\Windows Terminal\Fragments\CuteTerm\CuteTerm.json"
 
 [Code]
-function InitializeSetup(): Boolean;
+function HasPathSegment(PathValue, Segment: String): Boolean;
 begin
-  Result := True;
+  Result := Pos(';' + Lowercase(Segment) + ';', ';' + Lowercase(PathValue) + ';') > 0;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  OldPath, AppPath: String;
+begin
+  if CurStep = ssPostInstall then begin
+    AppPath := ExpandConstant('{app}');
+    if not RegQueryStringValue(HKCU, 'Environment', 'Path', OldPath) then
+      OldPath := '';
+    if not HasPathSegment(OldPath, AppPath) then begin
+      if OldPath = '' then
+        OldPath := AppPath
+      else
+        OldPath := OldPath + ';' + AppPath;
+      RegWriteExpandStringValue(HKCU, 'Environment', 'Path', OldPath);
+    end;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  OldPath, AppPath, UpdatedPath: String;
+begin
+  if CurUninstallStep = usPostUninstall then begin
+    AppPath := ExpandConstant('{app}');
+    if RegQueryStringValue(HKCU, 'Environment', 'Path', OldPath) then begin
+      UpdatedPath := StringChangeEx(';' + OldPath + ';', ';' + AppPath + ';', ';', True);
+      if (Length(UpdatedPath) >= 2) and (UpdatedPath[1] = ';') then
+        Delete(UpdatedPath, 1, 1);
+      if (Length(UpdatedPath) >= 1) and (UpdatedPath[Length(UpdatedPath)] = ';') then
+        Delete(UpdatedPath, Length(UpdatedPath), 1);
+      if UpdatedPath <> OldPath then
+        RegWriteExpandStringValue(HKCU, 'Environment', 'Path', UpdatedPath);
+    end;
+  end;
 end;
