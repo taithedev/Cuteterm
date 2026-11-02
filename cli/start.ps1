@@ -21,4 +21,7 @@ try {
         Set-PSReadLineKeyHandler -Key DownArrow -Function HistorySearchForward -ErrorAction SilentlyContinue
     }
 } catch { Write-Verbose "PSReadLine customization skipped: $_" }
+# Check official GitHub Releases at most once per configured interval.
+# In auto mode, install only a newer ZIP whose checksum matches the published manifest.
+try { ct checkupdates -Auto } catch { Write-Verbose "Startup release check skipped: $_" }
 Show-CuteTermStartup
