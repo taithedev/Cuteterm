@@ -72,35 +72,61 @@ function Get-CuteTermPrompt {
     return ((Tint '┌─' $p.muted) + (Tint " $env:USERNAME " $p.pink) + (Tint 'in ' $p.muted) + (Tint $path $p.cyan) + (Tint $branch $p.green) + [Environment]::NewLine + (Tint '└─❯ ' $p.pink))
 }
 function Show-CuteTermStartup {
-    $cfg = Get-CuteTermConfig
+    $cfg=Get-CuteTermConfig
     if (-not $cfg.Startup) { return }
-    $art = @(
-        '    ✦         .      *'
-        '       /\_/\    .'
-        '   .  ( o.o )       ✦'
-        '       > ^ <       '
-        '  ──────────────────'
+    if ($cfg.Animation -eq 'full') {
+        $frames=@('✦  loading CuteTerm .  ','✧  loading CuteTerm .. ','✦  loading CuteTerm ...','✧  loading CuteTerm ....')
+        foreach ($frame in $frames) {
+            Write-CuteTerm ('  ' + $frame) 'pink' -NoNewline
+            Start-Sleep -Milliseconds 95
+            Write-Host (([char]13) + (' ' * 44) + ([char]13)) -NoNewline
+        }
+    }
+    $cpu='{0} processors' -f [Environment]::ProcessorCount
+    $osName=[System.Runtime.InteropServices.RuntimeInformation]::OSDescription.Trim()
+    $memory='RAM: not available'
+    try {
+        $cpuName=(Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1).Name
+        if ($cpuName) { $cpu=$cpuName }
+        $os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $total=[math]::Round($os.TotalVisibleMemorySize/1MB,1)
+        $used=[math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)
+        $memory='RAM: {0} / {1} GiB' -f $used,$total
+    } catch { }
+    $shortOs=$osName.Substring(0,[math]::Min(40,$osName.Length))
+    $shortCpu=$cpu.Substring(0,[math]::Min(40,$cpu.Length))
+    $art=@(
+        '       .     ✦       *    '
+        '    /\_/\        .      '
+        '   ( o.o )   ✧          '
+        '    > ^ <          *    '
+        '  ╭───────────────╮     '
+        '  │    cuteterm   │     '
+        '  ╰───────────────╯     '
+        '   ● ● ● ● ● ● ● ●       '
     )
-    $colors = @('pink','cyan','pink','yellow','muted')
+    $stats=@(
+        "$env:USERNAME@$env:COMPUTERNAME"
+        "OS: $shortOs"
+        "Shell: PowerShell $($PSVersionTable.PSVersion)"
+        "CPU: $shortCpu"
+        $memory
+        "Theme: $($cfg.Theme)  /  animation: $($cfg.Animation)"
+        'Real PowerShell + installable command packs'
+        'Type ct help to begin'
+    )
+    $leftColors=@('muted','cyan','pink','pink','cyan','pink','cyan','pink')
+    $rightColors=@('pink','foreground','cyan','foreground','green','yellow','muted','cyan')
     Write-Host ''
-    for ($i=0; $i -lt $art.Count; $i++) {
-        Write-CuteTerm ('  ' + $art[$i]) $colors[$i]
+    for ($i=0;$i -lt $art.Count;$i++) {
+        Write-CuteTerm ('  '+$art[$i].PadRight(27)) $leftColors[$i] -NoNewline
+        Write-CuteTerm $stats[$i] $rightColors[$i]
         if ($cfg.Animation -ne 'off') {
-            Start-Sleep -Milliseconds $(if ($cfg.Animation -eq 'full') { 95 } else { 35 })
+            Start-Sleep -Milliseconds $(if ($cfg.Animation -eq 'full') { 95 } else { 28 })
         }
     }
     Write-Host ''
-    Write-CuteTerm '  CuteTerm  ✦  a softer side of PowerShell' 'pink'
-    Write-CuteTerm ("  {0}@{1}   •   PowerShell {2}" -f $env:USERNAME,$env:COMPUTERNAME,$PSVersionTable.PSVersion) 'cyan'
-    Write-CuteTerm ("  {0}   •   {1} logical processors" -f [System.Runtime.InteropServices.RuntimeInformation]::OSDescription,[Environment]::ProcessorCount) 'foreground'
-    try {
-        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-        $total = [math]::Round($os.TotalVisibleMemorySize/1MB,1)
-        $used = [math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)
-        Write-CuteTerm ("  Memory: {0} / {1} GiB" -f $used,$total) 'green'
-    } catch { }
-    Write-CuteTerm '  ● ● ● ● ● ● ● ●' 'pink'
-    Write-CuteTerm '  Try: ct help  |  ct commands  |  ct theme list  |  ct tab' 'muted'
+    Write-CuteTerm '  ✦ CuteTerm  /  ct commands  /  ct theme list  /  ct tab' 'muted'
     Write-Host ''
 }
 function ct {
