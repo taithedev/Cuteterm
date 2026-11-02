@@ -36,7 +36,16 @@ SetupLogging=yes
 [Files]
 Source: "..\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\cli\*"; DestDir: "{app}\cli"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\start.ps1"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "..\cli\cli.ps1"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "..\cli\version.txt"; DestDir: "{app}\cli"; Flags: ignoreversion
+Source: "..\cli\commands\*"; DestDir: "{app}\cli\commands"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\module\*"; DestDir: "{app}\cli\module"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\lib\*"; DestDir: "{app}\cli\lib"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\themes\*"; DestDir: "{app}\cli\themes"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\updater\*"; DestDir: "{app}\cli\updater"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\docs\*"; DestDir: "{app}\cli\docs"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\cli\examples\*"; DestDir: "{app}\cli\examples"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{userprograms}\CuteTerm"; Filename: "{localappdata}\CuteTerm\bin\cuteterm.cmd"; WorkingDir: "{userprofile}"; Comment: "CuteTerm PowerShell CLI"
