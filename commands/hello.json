@@ -1,0 +1,10 @@
+{
+  "name": "hello",
+  "description": "Show a native cmd.exe greeting",
+  "program": "cmd.exe",
+  "args": [
+    "/D",
+    "/C",
+    "echo Hello from a custom CuteTerm command!"
+  ]
+}
