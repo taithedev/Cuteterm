@@ -62,7 +62,6 @@ pub struct App {
     cpu: String,
     memory: String,
     os: String,
-    run_update: bool,
     should_exit: bool,
 }
 
@@ -95,7 +94,7 @@ impl App {
             custom, executables,
             started: Instant::now(),
             cpu, memory, os,
-            run_update: false, should_exit: false,
+            should_exit: false,
         })
     }
 
@@ -139,7 +138,7 @@ impl App {
     }
 
     fn control(&mut self, value: &str, width: u16, height: u16) {
-        let value = value.trim().trim_start_matches(['/', ':']);
+        let value = value.trim().trim_start_matches(|c| c == '/' || c == ':');
         let words = commands::split_words(value);
         if words.is_empty() { return; }
         let name = words[0].to_ascii_lowercase();
@@ -335,7 +334,7 @@ impl App {
                     }
                 }
                 KeyCode::Tab => {
-                    let typed=self.palette.text.trim_start_matches([':', '/']);
+                    let typed=self.palette.text.trim_start_matches(|c| c == '/' || c == ':');
                     if !typed.contains(' ') {
                         let matches:Vec<_>=commands::BUILTINS.iter()
                             .map(|(name,_)| name.trim_start_matches('/').split_whitespace().next().unwrap_or(""))
@@ -643,7 +642,7 @@ fn run_loop(terminal:&mut DefaultTerminal,app:&mut App)->io::Result<()> {
                     },
                     Event::Paste(text)=>{
                         if app.palette.open {
-                            app.palette.text.push_str(&text.replace(['\r','\n']," "));
+                            app.palette.text.push_str(&text.replace('\r'," ").replace('\n'," "));
                         } else if app.tab().session.alive {
                             let bracketed=app.tab().session.parser.screen().bracketed_paste();
                             if bracketed {app.tab_mut().session.write(b"\x1b[200~")?;}
