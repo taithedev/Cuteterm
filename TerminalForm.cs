@@ -1,123 +1,265 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
-using System.Text;
-using System.Windows.Forms;
+using System.Text.Json;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 namespace CuteTerm;
 
 public sealed class TerminalForm : Form
 {
-    [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
-    private readonly TabControl tabs = new() { Dock = DockStyle.Fill };
-    private readonly Label heading = new() { Text = "✦  CuteTerm", ForeColor = Color.FromArgb(255, 194, 218), Font = new Font("Segoe UI", 15, FontStyle.Bold), AutoSize = true };
-    private readonly Button add = new() { Text = "+  New tab", FlatStyle = FlatStyle.Flat, BackColor = Color.FromArgb(56, 54, 74), ForeColor = Color.White, Width = 104, Height = 32 };
-    private readonly Label status = new() { Text = "PowerShell  •  Ready", AutoSize = true, ForeColor = Color.FromArgb(169, 213, 193) };
-    private readonly Dictionary<TabPage, Session> sessions = new();
-    private sealed class Session
-    {
-        public required RichTextBox Output;
-        public required TextBox Input;
-        public string Directory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        public readonly List<string> History = new();
-        public int HistoryIndex;
-        public bool Busy;
-    }
+    private const int WM_NCHITTEST = 0x0084;
+    private readonly WebView2 web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.Transparent };
+    private readonly Dictionary<string, ConPtySession> sessions = new();
+    private readonly string appHome;
+    private readonly string commandDirectory;
+    private readonly string settingsPath;
+    private readonly System.Windows.Forms.Timer systemTimer = new() { Interval = 2500 };
+    private AppSettings settings;
+    private bool webReady;
 
     public TerminalForm()
     {
-        Text = "CuteTerm"; Width = 1120; Height = 720; MinimumSize = new Size(700, 450);
-        BackColor = Color.FromArgb(28, 28, 43); ForeColor = Color.White;
-        Font = new Font("Segoe UI", 10);
-        var dark = 1; DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
-        var backdrop = 3; DwmSetWindowAttribute(Handle, 38, ref backdrop, sizeof(int));
-        var top = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 57, Padding = new Padding(15, 10, 0, 0), BackColor = Color.FromArgb(39, 37, 55) };
-        heading.Margin = new Padding(0, 3, 28, 0);
-        add.FlatAppearance.BorderSize = 0; add.Click += (_, _) => NewTab();
-        top.Controls.Add(heading); top.Controls.Add(add);
-        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 31, Padding = new Padding(14, 6, 0, 0), BackColor = Color.FromArgb(39, 37, 55) };
-        bottom.Controls.Add(status);
-        tabs.DrawMode = TabDrawMode.OwnerDrawFixed; tabs.ItemSize = new Size(155, 33);
-        tabs.DrawItem += (_, e) => {
-            var rect = e.Bounds;
-            using var brush = new SolidBrush(e.Index == tabs.SelectedIndex ? Color.FromArgb(66, 61, 84) : Color.FromArgb(39, 37, 55));
-            e.Graphics.FillRectangle(brush, rect);
-            TextRenderer.DrawText(e.Graphics, tabs.TabPages[e.Index].Text, Font, rect, Color.FromArgb(245, 213, 229), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        Text = "CuteTerm";
+        Name = "CuteTerm";
+        Width = 1200;
+        Height = 770;
+        MinimumSize = new Size(750, 470);
+        StartPosition = FormStartPosition.CenterScreen;
+        FormBorderStyle = FormBorderStyle.None;
+        BackColor = Color.FromArgb(31, 31, 46);
+        DoubleBuffered = true;
+        appHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CuteTerm");
+        commandDirectory = Path.Combine(appHome, "commands");
+        settingsPath = Path.Combine(appHome, "settings.json");
+        Directory.CreateDirectory(commandDirectory);
+        InstallDefaultCommands();
+        settings = AppSettings.Load(settingsPath);
+        Environment.SetEnvironmentVariable("CUTETERM_HOME", appHome);
+        Environment.SetEnvironmentVariable("CUTETERM_COMMANDS", commandDirectory);
+        Controls.Add(web);
+        Load += async (_, _) => await InitializeWebAsync();
+        FormClosed += (_, _) =>
+        {
+            systemTimer.Stop();
+            foreach (var session in sessions.Values.ToArray()) session.Dispose();
+            sessions.Clear();
         };
-        Controls.Add(tabs); Controls.Add(bottom); Controls.Add(top);
-        NewTab();
-    }
-
-    private void NewTab()
-    {
-        var page = new TabPage("❯ PowerShell") { BackColor = Color.FromArgb(29, 28, 44), Padding = new Padding(12) };
-        var output = new RichTextBox { Dock = DockStyle.Fill, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = page.BackColor, ForeColor = Color.FromArgb(220, 220, 236), Font = new Font("Cascadia Mono", 10), DetectUrls = true, WordWrap = false };
-        var input = new TextBox { Dock = DockStyle.Bottom, Height = 32, BorderStyle = BorderStyle.None, BackColor = Color.FromArgb(43, 41, 61), ForeColor = Color.FromArgb(248, 221, 234), Font = new Font("Cascadia Mono", 11), PlaceholderText = "❯  Enter a PowerShell command..." };
-        page.Controls.Add(output); page.Controls.Add(input);
-        var session = new Session { Output = output, Input = input };
-        sessions[page] = session;
-        input.KeyDown += async (_, e) => {
-            if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; await Execute(session); }
-            else if (e.KeyCode == Keys.Up && session.History.Count > 0) { e.SuppressKeyPress = true; session.HistoryIndex = Math.Max(0, session.HistoryIndex - 1); input.Text = session.History[session.HistoryIndex]; input.SelectionStart = input.Text.Length; }
-            else if (e.KeyCode == Keys.Down && session.History.Count > 0) { e.SuppressKeyPress = true; session.HistoryIndex = Math.Min(session.History.Count, session.HistoryIndex + 1); input.Text = session.HistoryIndex == session.History.Count ? "" : session.History[session.HistoryIndex]; input.SelectionStart = input.Text.Length; }
+        systemTimer.Tick += (_, _) =>
+        {
+            if (!webReady) return;
+            var memory = MemoryInfo.Read();
+            Send(new { type = "metrics", memoryPercent = memory.UsedPercent, memoryUsedGiB = memory.UsedGiB, memoryTotalGiB = memory.TotalGiB, time = DateTime.Now.ToString("HH:mm") });
         };
-        tabs.TabPages.Add(page); tabs.SelectedTab = page;
-        Write(session, "  ✦ CuteTerm  •  Your space to create\n", Color.FromArgb(255, 180, 207));
-        Write(session, "  PowerShell command runner  |  Type help for commands\n\n", Color.FromArgb(156, 201, 216));
-        Write(session, "  " + Environment.UserName + " @ " + Environment.MachineName + "\n", Color.FromArgb(187, 224, 204));
-        Write(session, "  Windows " + Environment.OSVersion.Version + "  •  " + Environment.ProcessorCount + " logical processors\n\n", Color.FromArgb(187, 192, 213));
-        input.Focus();
+        Shown += (_, _) => ApplyBackdrop();
     }
 
-    private void Write(Session s, string text, Color color)
+    private void InstallDefaultCommands()
     {
-        if (s.Output.IsDisposed) return;
-        s.Output.SelectionStart = s.Output.TextLength;
-        s.Output.SelectionLength = 0;
-        s.Output.SelectionColor = color;
-        s.Output.AppendText(text);
-        s.Output.SelectionColor = s.Output.ForeColor;
-        s.Output.ScrollToCaret();
+        var defaults = Path.Combine(AppContext.BaseDirectory, "commands", "defaults");
+        if (!Directory.Exists(defaults)) return;
+        foreach (var source in Directory.EnumerateFiles(defaults, "*.ps1"))
+        {
+            var target = Path.Combine(commandDirectory, Path.GetFileName(source));
+            if (!File.Exists(target)) File.Copy(source, target);
+        }
     }
 
-    private async Task Execute(Session s)
+    private async Task InitializeWebAsync()
     {
-        if (s.Busy) return;
-        string command = s.Input.Text.Trim();
-        s.Input.Clear();
-        if (command.Length == 0) return;
-        s.History.Add(command); s.HistoryIndex = s.History.Count;
-        Write(s, "❯ " + command + "\n", Color.FromArgb(249, 177, 210));
-        if (command.Equals("clear", StringComparison.OrdinalIgnoreCase) || command.Equals("cls", StringComparison.OrdinalIgnoreCase)) { s.Output.Clear(); return; }
-        if (command.Equals("cuteterm", StringComparison.OrdinalIgnoreCase)) { Write(s, "CuteTerm • Native Windows C# preview\n", Color.LightPink); return; }
-        s.Busy = true; s.Input.Enabled = false; status.Text = "PowerShell  •  Running";
+        var root = Path.Combine(AppContext.BaseDirectory, "ui", "dist");
+        if (!File.Exists(Path.Combine(root, "index.html")))
+        {
+            Controls.Clear();
+            Controls.Add(new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White, Text = "CuteTerm UI assets are missing.\nRun scripts/build.ps1 and relaunch." });
+            return;
+        }
         try
         {
-            // This preview executes one command per PowerShell process. Interactive TUIs are not supported.
-            var script = "Set-Location -LiteralPath " + Quote(s.Directory) + "; " + command + "; Write-Output ('__CUTETERM_PWD__' + (Get-Location).Path)";
-            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-            var psi = new ProcessStartInfo("powershell.exe", "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + encoded)
+            await web.EnsureCoreWebView2Async();
+            var core = web.CoreWebView2;
+            core.SetVirtualHostNameToFolderMapping("cuteterm.local", root, CoreWebView2HostResourceAccessKind.DenyCors);
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
+            core.NavigationStarting += (_, e) =>
             {
-                RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false,
-                CreateNoWindow = true, WorkingDirectory = s.Directory,
-                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+                if (!e.Uri.StartsWith("https://cuteterm.local/", StringComparison.OrdinalIgnoreCase)) e.Cancel = true;
             };
-            using var p = new Process { StartInfo = psi };
-            p.Start();
-            var stdout = p.StandardOutput.ReadToEndAsync();
-            var stderr = p.StandardError.ReadToEndAsync();
-            await p.WaitForExitAsync();
-            var outText = await stdout; var errText = await stderr;
-            foreach (var line in outText.Split('\n'))
+            core.NewWindowRequested += (_, e) =>
             {
-                var clean = line.TrimEnd('\r');
-                if (clean.StartsWith("__CUTETERM_PWD__")) { var next = clean["__CUTETERM_PWD__".Length..]; if (Directory.Exists(next)) s.Directory = next; }
-                else if (clean.Length > 0) Write(s, clean + "\n", Color.FromArgb(221, 222, 235));
-            }
-            if (!string.IsNullOrWhiteSpace(errText)) Write(s, errText + "\n", Color.FromArgb(255, 145, 158));
+                e.Handled = true;
+                if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp))
+                {
+                    try { Process.Start(new ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }); } catch { }
+                }
+            };
+            core.WebMessageReceived += Receive;
+            core.Navigate("https://cuteterm.local/index.html");
         }
-        catch (Exception ex) { Write(s, ex.Message + "\n", Color.FromArgb(255, 145, 158)); }
-        finally { s.Busy = false; s.Input.Enabled = true; status.Text = "PowerShell  •  Ready"; s.Input.Focus(); }
+        catch (Exception error)
+        {
+            Controls.Clear();
+            Controls.Add(new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White,
+                Text = "Cannot initialize WebView2. Install the Microsoft Edge WebView2 Runtime.\n\n" + error.Message });
+        }
     }
-    private static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+
+    private void Receive(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        try
+        {
+            if (!e.Source.StartsWith("https://cuteterm.local/", StringComparison.OrdinalIgnoreCase)) return;
+            using var doc = JsonDocument.Parse(e.WebMessageAsJson);
+            var msg = doc.RootElement;
+            if (msg.ValueKind != JsonValueKind.Object) return;
+            string type = GetString(msg, "type", 40);
+            string id = GetString(msg, "id", 80);
+            switch (type)
+            {
+                case "ready":
+                    webReady = true;
+                    Send(new { type = "init", user = Environment.UserName, machine = Environment.MachineName, os = Environment.OSVersion.VersionString,
+                        theme = settings.Theme, fontSize = settings.FontSize, blur = settings.Blur, appVersion = "0.2.0",
+                        commandsFolder = commandDirectory, hasPwsh = ConPtySession.IsOnPath("pwsh.exe") });
+                    NewTab(settings.DefaultShell);
+                    systemTimer.Start();
+                    break;
+                case "newTab":
+                    NewTab(GetString(msg, "shell", 30));
+                    break;
+                case "closeTab":
+                    if (sessions.Remove(id, out var closed))
+                    {
+                        _ = Task.Run(closed.Dispose);
+                        Send(new { type = "tabClosed", id });
+                    }
+                    break;
+                case "input":
+                    if (sessions.TryGetValue(id, out var inputSession))
+                    {
+                        string data = GetString(msg, "data", 131072);
+                        if (data.Length > 0) inputSession.Write(data);
+                    }
+                    break;
+                case "resize":
+                    if (sessions.TryGetValue(id, out var resizeSession))
+                    {
+                        int cols = Math.Clamp(GetInt(msg, "cols", 100), 20, 400);
+                        int rows = Math.Clamp(GetInt(msg, "rows", 30), 8, 200);
+                        resizeSession.Resize(cols, rows);
+                    }
+                    break;
+                case "window":
+                    switch (GetString(msg, "action", 20))
+                    {
+                        case "drag":
+                            if (WindowState == FormWindowState.Normal) { NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero); }
+                            break;
+                        case "minimize": WindowState = FormWindowState.Minimized; break;
+                        case "maximize": WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; break;
+                        case "close": Close(); break;
+                        case "fullscreen": FormBorderStyle = FormBorderStyle.None; WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized; break;
+                    }
+                    break;
+                case "openCommands":
+                    Process.Start(new ProcessStartInfo("explorer.exe", "\"" + commandDirectory + "\"") { UseShellExecute = true });
+                    break;
+                case "openSettings":
+                    Process.Start(new ProcessStartInfo("notepad.exe", "\"" + settingsPath + "\"") { UseShellExecute = true });
+                    break;
+                case "settings":
+                    string theme = GetString(msg, "theme", 30);
+                    if (theme is "arctic" or "rose" or "midnight" or "forest") settings.Theme = theme;
+                    settings.FontSize = Math.Clamp(GetInt(msg, "fontSize", settings.FontSize), 11, 22);
+                    if (msg.TryGetProperty("blur", out var blur) && blur.ValueKind is JsonValueKind.True or JsonValueKind.False) settings.Blur = blur.GetBoolean();
+                    settings.Save(settingsPath);
+                    ApplyBackdrop();
+                    Send(new { type = "settingsSaved", theme = settings.Theme, fontSize = settings.FontSize, blur = settings.Blur });
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("WebView message error: " + ex);
+        }
+    }
+
+    private void NewTab(string? requestedShell)
+    {
+        var shell = requestedShell switch
+        {
+            "cmd" => "cmd",
+            "pwsh" when ConPtySession.IsOnPath("pwsh.exe") => "pwsh",
+            "powershell" => "powershell",
+            _ => ConPtySession.IsOnPath("pwsh.exe") ? "pwsh" : "powershell"
+        };
+        var id = Guid.NewGuid().ToString("N");
+        var session = new ConPtySession(shell, Path.Combine(AppContext.BaseDirectory, "commands", "bootstrap.ps1"));
+        session.Output += chunk => OnUiThread(() => Send(new { type = "output", id, data = chunk }));
+        session.Exited += () => OnUiThread(() => Send(new { type = "sessionExited", id }));
+        sessions[id] = session;
+        Send(new { type = "tabCreated", id, shell });
+        try { session.Start(); }
+        catch (Exception ex)
+        {
+            Send(new { type = "output", id, data = "\r\n\u001b[31mCouldn't start terminal: " + ex.Message + "\u001b[0m\r\n" });
+            Send(new { type = "sessionExited", id });
+        }
+    }
+
+    private void OnUiThread(Action action)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(action); } catch (InvalidOperationException) { }
+    }
+
+    private void Send(object payload)
+    {
+        if (webReady && web.CoreWebView2 is not null)
+            web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(payload));
+    }
+    private static string GetString(JsonElement el, string name, int limit)
+        => el.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? (value.GetString() ?? "")[..Math.Min(value.GetString()?.Length ?? 0, limit)] : "";
+    private static int GetInt(JsonElement el, string name, int fallback)
+        => el.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : fallback;
+
+    private void ApplyBackdrop()
+    {
+        try
+        {
+            int dark = 1, corners = 2, backdrop = settings.Blur ? 3 : 1;
+            NativeMethods.DwmSetWindowAttribute(Handle, 20, ref dark, sizeof(int));
+            NativeMethods.DwmSetWindowAttribute(Handle, 33, ref corners, sizeof(int));
+            NativeMethods.DwmSetWindowAttribute(Handle, 38, ref backdrop, sizeof(int));
+        }
+        catch (DllNotFoundException) { }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_NCHITTEST && WindowState == FormWindowState.Normal)
+        {
+            var l = m.LParam.ToInt64();
+            var position = PointToClient(new Point(unchecked((short)(l & 0xFFFF)), unchecked((short)((l >> 16) & 0xFFFF))));
+            const int edge = 7;
+            bool left = position.X < edge, right = position.X >= ClientSize.Width - edge;
+            bool top = position.Y < edge, bottom = position.Y >= ClientSize.Height - edge;
+            int hit = (left, right, top, bottom) switch
+            {
+                (true, _, true, _) => 13,
+                (_, true, true, _) => 14,
+                (true, _, _, true) => 16,
+                (_, true, _, true) => 17,
+                (true, _, _, _) => 10,
+                (_, true, _, _) => 11,
+                (_, _, true, _) => 12,
+                (_, _, _, true) => 15,
+                _ => 0
+            };
+            if (hit != 0) { m.Result = (IntPtr)hit; return; }
+        }
+        base.WndProc(ref m);
+    }
 }
